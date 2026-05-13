@@ -1,348 +1,466 @@
-# ROADMAP.md
+# ROADMAP.md — `hookset`
 
-## Project `hookset` — The Configuration-Native Git Hook Manager
+## Project `hookset` — The Configuration‑Native Git Hook Manager
 
-`hookset` is a globally-installed CLI tool that lets you define, manage, and run Git hooks entirely through `git config`, leveraging the native config‑based hook mechanism introduced in Git 2.54. Every lint‑staging, formatting, or analysis step runs through `hookset exec`, a single binary that handles staged‑file filtering, stash/pop, and re‑staging — no extra tools required, no per‑repo scripts, no `package.json` pollution.
+`hookset` is a globally‑installed, language‑agnostic CLI tool that lets you define, run, and share Git hooks
+entirely through Git’s native `[hook]` configuration sections (introduced in Git 2.54). It implements its own
+staging‑file filtering and stash‑unmodified‑pop engine, so repositories never depend on `lint‑staged`, husky,
+lefthook, or any package‑manager‑specific hook runner.
 
----
-
-## Goals
-
-- **Zero repo pollution** – no hook scripts, no `prepare` scripts, no `core.hooksPath` tricks.
-- **Git 2.54 first** – use native `[hook]` config sections; provide graceful fallback for older Git.
-- **Self‑contained staging engine** – `hookset exec` replaces `lint‑staged` entirely (stash, filter, run, re‑stage).
-- **One binary, many installs** – pre‑compiled static Go binary, distributed via `curl|sh`, Homebrew, winget, and optional npm/pip thin wrappers.
-- **Seamless migration** – `hookset migrate` can read existing husky, lefthook, or lint‑staged setups and convert them.
+**`hookset` requires Git 2.54 or later.** No separate fallback scripts are ever committed — hooks are pure configuration.
 
 ---
 
-## Phase 0: Research & Design Finalization
+## Core Principles
 
-**Goal:** Understand how existing tools handle hooks, staging, and configuration, and pin down the final architecture for `hookset` before writing code.
+1. **No per‑language tooling pollution in the repository.**  
+   No `package.json` entries, no `prepare` scripts, no `.huskyrc`, no `lefthook.yml`.  
+   _The only intentional committed file is a declarative, language‑agnostic `.hookset.toml`._
 
-### Tasks
+2. **Workstation‑level install, not a project dependency.**  
+   `hookset` is installed once per machine (brew, curl, winget) — just like Git.  
+   It is _not_ a `devDependency`. A contributor is expected to have it before cloning.
 
-1. **Deep‑dive into Git 2.54 config‑based hooks**
-   - Study `hook.<name>.event`, `hook.<name>.command`, `hook.<name>.enabled`.
-   - Understand ordering: hooks run in the order they appear in config, with `$GIT_DIR/hooks` scripts running last.
-   - Check multi‑value config support (e.g., repeated `--match`).
-   - Determine how `git hook list` works and what `hookset list` should wrap.
+3. **One binary, one staging engine.**  
+   `hookset exec` replaces `lint‑staged` entirely. No wrapper scripts, no shell‑out to other tools
+   for the core stash‑filter‑restage dance.
 
-2. **Analyse husky v9**
-   - How does husky install? (writes `.husky/*` scripts, sets `core.hooksPath = .husky`).
-   - Hook content is just user‑written shell. Most users combine with lint‑staged.
-   - Extract migration strategy: read `.husky/pre-commit` to retrieve commands.
+4. **Native configuration only.**  
+   Hooks are defined directly in Git config using `[hook "name"]` sections.  
+   `hookset init` reads `.hookset.toml` and writes the equivalent local config; `hookset add` writes
+   directly to the chosen scope. Git 2.54 or later is a hard requirement.
 
-3. **Analyse lefthook**
-   - Configuration in `lefthook.yml`, multiple commands per hook, globs, parallel execution.
-   - Installs a wrapper script into `.git/hooks/` that invokes `lefthook run`.
-   - Migration: parse YAML, map to `hookset add` options.
+5. **Shared config via include.**  
+   A project’s `.hookset.toml` can include a shared file (e.g., from a dotfiles repo) to avoid
+   repeating hook definitions across repositories.
 
-4. **Analyse lint‑staged**
-   - Config in `package.json` (or `.lintstagedrc`), glob → command mapping.
-   - Implementation: `git stash` specific index, run linters on matching files, re‑add, pop.
-   - Edge cases: partial staging (it re‑stages whole files), deleted files, submodules, `--allow-empty`.
-   - Migration: read config and emit `hookset add` for each tool.
-
-5. **Decide compatibility strategy**
-   - Git ≥ 2.54: write native `[hook]` sections, `hookset exec` invoked directly via `command`.
-   - Git < 2.54: fallback to a `.git/hooks/<event>` shell script that calls `hookset run <event>`.
-   - Auto‑detect on `hookset add` and choose the right method (or error with a clear message).
-
-6. **Finalise config schema**
-   - Hook entry fields: `event`, `command` (with `hookset exec`), optionally `match`, `enabled`.
-   - Support per‑repo (`--local`) and per‑user (`--global`) scopes.
-   - Allow multiple `--match` values stored as multi‑value config keys.
-
-### Acceptance Criteria
-
-- [ ] A written summary of native Git 2.54 hook behaviour, limitations, and multi‑value support.
-- [ ] Migration mapping tables for husky, lefthook, lint‑staged.
-- [ ] Decision document on fallback mechanism (e.g., fallback script template, how `hookset add` handles it).
-- [ ] Final JSON/YAML schema (conceptual) for a hook entry used internally.
+6. **No committed hook scripts.**  
+   The hook command stored in Git config is a self‑contained one‑liner that checks for the
+   `hookset` binary itself, so missing‑binary errors are human‑readable even without the tool.
 
 ---
 
-## Phase 1: Project Infrastructure
+## Detailed Phases
 
-**Goal:** Set up the monorepo, build tooling, and minimal runnable skeleton.
+### Phase 0 — Research, Design, and Spike (3 weeks)
 
-### Tasks
+**Goal:** Validate the staging engine approach, pin down the bootstrapping story, and understand
+every tool we intend to replace or migrate.
 
-1. **Initialize Go module and directory structure**
-   - `cmd/hookset/main.go`, `cmd/` sub‑commands skeleton (using `cobra` or `urfave/cli`).
-   - `internal/gitconfig/`, `internal/exec/`, `internal/migrate/` packages.
-2. **Configure goreleaser** for cross‑compilation (linux/amd64, linux/arm64, macos/amd64, macos/arm64, windows/amd64).
-3. **Set up CI** (GitHub Actions) with linting, test matrix, and release workflow.
-4. **Versioning** – embed version via `-ldflags`, show with `hookset version`.
-5. **Basic logging and error handling** – structured output for normal runs, `--verbose` for debugging.
+#### Tasks
 
-### Acceptance Criteria
+1. **Git 2.54 native hooks deep‑dive**
+   - Experiment with `[hook "name"] event = pre-commit; command = ...`
+   - Understand config scoping, multi‑value keys, ordering relative to `.git/hooks/` scripts.
+   - Verify how `git hook list` reports hooks from multiple scopes.
 
-- [ ] `go build ./cmd/hookset` produces a binary that prints version and help.
-- [ ] Cross‑compilation CI passes and attaches binaries to a GitHub Release.
-- [ ] Repository structure matches the agreed layout.
+2. **Analyse husky, lefthook, lint‑staged**
+   - How does husky v9 install? (`.husky/` directory, `core.hooksPath`)
+   - How does lefthook install? (wrapper script, `lefthook.yml` config)
+   - How does lint‑staged implement its stash → run → restage loop?
+   - Document migration mapping: from each tool’s config to equivalent `hookset add` commands.
+
+3. **Bootstrapping design**
+   - Define the format of `.hookset.toml` (the single committed file). Support an `include` key
+     pointing to a local path for shared standard hooks (e.g., from a dotfiles repo).
+
+     ```toml
+     include = "~/dotfiles/hooks/standard.toml"
+
+     [[hooks]]
+     name = "eslint"
+     event = "pre-commit"
+     match = ["*.ts", "*.js"]
+     command = "npx eslint --cache --fix"
+     ```
+
+   - **Canonical flow:** maintainers edit `.hookset.toml` (or use `hookset add --manifest` to append to it).  
+     Contributors run `hookset init`, which reads the TOML and writes local `[hook]` config.  
+     _There is no direct path from `hookset add` to local git config that bypasses the TOML_ — when a maintainer
+     wants to add a hook both locally and to the manifest, they run `hookset init` after updating the manifest,
+     never the reverse. The `--manifest` flag exists only to update the committed file; `hookset add` without
+     `--manifest` is for personal, uncommitted hooks.
+   - Design the self‑checking wrapper command: `hookset init` writes a `command` that starts with a presence
+     check, e.g.:
+     ```
+     sh -c 'command -v hookset >/dev/null 2>&1 || { echo "hookset is not installed. Install with: brew install hookset   (or visit https://hookset.dev)" >&2; exit 1; }; exec hookset exec --match ... -- ...'
+     ```
+     This ensures the commit fails with a human‑readable message if `hookset` is missing.
+
+4. **Staging engine spike**
+   - Write a separate, throw‑away Go program that takes a command and a list of file patterns,
+     performs the `git stash --keep-index`, runs the command, re‑stages modified files, and pops
+     the stash.
+   - Read the `nano-staged` source as a compact reference for the core loop.
+   - Run it against a curated set of test repositories covering:
+     - Only unstaged changes unrelated to the linted files.
+     - Partially staged files (some hunks staged, some not).
+     - A linter that deletes a file.
+     - A linter that converts CRLF ↔ LF.
+     - Staged binary files.
+     - Submodules in the tree (skipped).
+     - Two active worktrees for the same repo (commit in one while the other is dirty).
+   - Document every failure mode and mitigation strategy.
+
+#### Acceptance Criteria
+
+- [ ] Internal design note on Git 2.54 hook semantics and edge cases.
+- [ ] Migration mapping tables for husky, lefthook, lint-staged.
+- [ ] Finalised `.hookset.toml` specification (fields, types, allowed events, `include` semantics).
+- [ ] Spike results: list of staging engine risks and a clear “go / no‑go” decision.
 
 ---
 
-## Phase 2: Core Git Config Operations
+### Phase 1 — Infra & Skeleton (2 weeks)
 
-**Goal:** A reliable library that reads and writes `hook.*` keys using `git config`, even when the repo is missing, bare, or in a broken state.
+**Goal:** Set up the repository, build system, and a minimal runnable CLI.
 
-### Tasks
+#### Tasks
 
-1. **Implement `internal/gitconfig` package**
-   - `GetHooks(event string, scope)` → list of hook entries with name, command, enabled.
-   - `AddHook(name, event, command, extraKeyValues map[string]string, scope)`.
+1. **Go module & directory layout**
+
+```
+hookset/
+├── cmd/hookset/        # main
+├── internal/
+│   ├── gitconfig/      # read/write git config
+│   ├── exec/           # staging engine
+│   ├── migrate/        # husky/lefthook/lint-staged parsers
+│   └── toml/           # .hookset.toml handling
+├── scripts/
+│   ├── install.sh      # curl | sh installer
+│   └── install.ps1     # irm | iex installer
+└── .goreleaser.yml
+```
+
+2. **Goreleaser & CI**
+   - Cross‑compile for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64.
+   - GitHub Actions release workflow that attaches binaries to tags.
+
+3. **CLI skeleton**
+   - `hookset version` prints build info.
+   - Help text for planned subcommands: `add`, `remove`, `list`, `disable`, `enable`, `exec`, `init`, `migrate`.
+   - Verbose flag (`--verbose`) wired into all commands.
+   - Check for Git ≥ 2.54 at startup; refuse to run otherwise with a clear message.
+
+#### Acceptance Criteria
+
+- [ ] `go build ./cmd/hookset` produces a binary.
+- [ ] CI passes: lint, build, attach to release.
+- [ ] `hookset --help` shows a clean command tree.
+- [ ] Running `hookset` on Git < 2.54 prints a specific error directing the user to upgrade.
+
+---
+
+### Phase 2 — Git Config & `.hookset.toml` Operations (2 weeks)
+
+**Goal:** A reliable library that reads/writes `hook.*` keys and the committed manifest.
+
+#### Tasks
+
+1. **`internal/gitconfig` package**
+   - `GetHooks(event string, scope)` — list hooks with name, command, enabled status, match patterns.
+   - `AddHook(name, event, command, matches []string, scope)` — writes via `git config`.
    - `RemoveHook(name, scope)`.
-   - `EnableHook(name, enabled bool, scope)`.
-   - All operations shell out to `git config` (safe, respects includes, handles quoting).
-2. **Handle multi‑value keys**
-   - `--match` values stored as multiple `hook.<name>.match` lines.
-   - `hookset add --match ...` must use `git config --add` for each.
-3. **Scope validation** – refuse to write `--global` if `--local` already exists? (Or allow and Git merging rules apply; document.)
-4. **Fallback hook file management**
-   - For pre‑2.54, `WriteFallbackHook(event)` creates `.git/hooks/<event>` with a shebang that calls `hookset run <event>`.
-   - Idempotent, must not erase user’s custom scripts unless the whole file is managed by us (use a sentinel comment).
-   - `RemoveFallbackHook(event)` if no more hooks exist.
+   - `EnableHook(name, scope, enabled bool)`.
+   - Multi‑value match support: each `--match` becomes a separate `hook.<name>.match` line.
+   - **Idempotent addition:** when adding a hook that may already exist (e.g., on re‑run of `hookset init`), `AddHook` will first delete all existing `hook.<name>.*` entries in the target scope, then write the new values. This prevents duplicate multi‑value lines from accumulating. The same remove‑then‑add strategy is used by `hookset init` for each hook it processes.
 
-### Acceptance Criteria
+2. **Scope merging test suite**
+   - Verify that when hooks with the same event exist in both global and local scope,
+     they are returned in the order Git would execute them.
+   - Ensure that disabling a hook at the local level does not affect the global entry.
+   - Test that `hookset list` mirrors `git config --get-regexp` ordering.
 
-- [ ] Unit tests for all operations using a temporary Git repository.
-- [ ] Adding a hook with three `--match` values results in three `hook.name.match` lines.
-- [ ] Listing returns all hooks, including those from global/local scope, with correct ordering.
-- [ ] Fallback script is created with `# hookset managed` comment; re‑running does not duplicate.
+3. **`.hookset.toml` handling**
+   - `ReadManifest(path)` — validates and returns hooks; resolves local `include` paths and
+     merges included hooks (project overrides by name if duplicate).
+     **Missing included files:** emit a **warning** by default, skip the missing hooks.
+     A `--strict` flag on `hookset init` turns this into a fatal error.
+   - `AddToManifest(path, hook)` — idempotent update (used by `hookset add --manifest`).
+   - Mapping between TOML fields and git‑config multi‑value keys.
+
+#### Acceptance Criteria
+
+- [ ] Unit tests for all get/add/remove/enable operations on a temporary repo.
+- [ ] A hook with three `match` patterns results in three `hook.name.match` lines.
+- [ ] Scope ordering tests pass and are documented as the canonical behaviour.
+- [ ] An existing `.hookset.toml` can be parsed and round‑tripped without data loss.
+- [ ] Including a shared TOML file merges hooks correctly, with project overrides respected.
+- [ ] Missing included file produces a warning; with `--strict` it produces a non‑zero exit.
 
 ---
 
-## Phase 3: Hook Management CLI
+### Phase 3 — CLI: Hook Management (2 weeks)
 
-**Goal:** Provide the `add`, `remove`, `list`, `disable`, `enable` commands.
+**Goal:** `hookset add`, `remove`, `list`, `disable`, `enable`, and `hookset init`.
 
-### Tasks
+#### Canonical flow (enforced)
+
+- **Maintainer** edits `.hookset.toml` (or uses `hookset add --manifest` to append to it), then runs `hookset init` to apply the changes locally.
+- **Contributor** clones and runs `hookset init`.  
+  _There is no `hookset add` that writes local git config directly for a team hook; `hookset add` without `--manifest` is reserved for personal, uncommitted hooks._
+
+#### Tasks
 
 1. **`hookset add`**
-   - Parses `--match` (repeatable), `--on` (event, default `pre-commit`), `--cmd` (the raw command without `hookset exec` wrapper).
-   - If Git ≥ 2.54, writes `hook.<name>.event` and `hook.<name>.command = "hookset exec --match ... -- <cmd>"` directly.
-   - If Git < 2.54, falls back to writing the `command` into config (for `hookset run` to read) and installs the fallback hook script.
-   - Fluent examples: `hookset add eslint --match "*.ts" --on pre-commit -- npx eslint --cache --fix`.
-2. **`hookset list`**
-   - Wraps `git hook list` when available, else custom listing from config.
-   - Shows scope, name, command, enabled status.
-3. **`hookset remove <name>`** – removes all config entries for that hook.
-4. **`hookset disable <name>` / `enable`** – sets `hook.<name>.enabled`.
-5. **`--global` / `--local` flags** (default: `--local`).
-6. **Validation**
-   - Hook names must be valid config section keys.
-   - Event names must be valid Git hooks.
-   - Warn if `hookset exec` is not installed when adding.
+   - Flags: `--match` (repeatable), `--on` (default `pre-commit`). The command is specified after a `--` separator (idiomatic for subprocess invocations), e.g., `hookset add eslint --match "*.ts" --on pre-commit -- npx eslint --cache --fix`.
+   - With `--manifest`: appends the hook to `.hookset.toml` **only**. Does not write git config.
+   - Without `--manifest`: writes a local `[hook "name"]` section directly to `.git/config` (for personal, per‑repo usage that is not meant to be shared).
+   - With `--global`: writes to `~/.gitconfig` (always direct config; never touches a manifest).
 
-### Acceptance Criteria
+2. **`hookset remove <name>`** — removes all related `hook.<name>.*` entries from the chosen scope (and optionally from the manifest with `--manifest`).
 
-- [ ] Full cycle of add → list → disable → enable → remove works without errors.
-- [ ] Adding a hook with `--global` places it in `~/.gitconfig`; local overrides are shown in list.
-- [ ] On Git < 2.54, a `.git/hooks/pre-commit` script is created and calls `hookset run pre-commit`.
-- [ ] Invalid event name is rejected with a helpful message.
+3. **`hookset disable/enable <name>`** — toggles `hook.<name>.enabled`.
 
----
+4. **`hookset list`** — uses `git hook list` and presents a clean table.
 
-## Phase 4: `hookset exec` — The Staging Engine
+5. **`hookset init`**
+   - Reads `.hookset.toml` (and any included files) from the repo root. Missing includes warn by default, `--strict` makes them an error.
+   - For each hook entry, writes the self‑checking wrapper command into the local `[hook]` config:
+     ```
+     sh -c 'command -v hookset >/dev/null 2>&1 || { echo "hookset not found. Install: brew install hookset" >&2; exit 1; }; exec hookset exec --match ... -- ...'
+     ```
+     (actual install instructions tailored to OS at generation time).
+   - Idempotent: can be run multiple times without duplicating entries.
 
-**Goal:** Implement the subcommand that Git actually calls (either directly via native 2.54 hooks or via `hookset run`). This is the core of lint‑staged‑replacement.
+#### Acceptance Criteria
 
-### Tasks
+- [ ] Full lifecycle: `add` (personal) → `list` → `disable` → `enable` → `remove` works.
+- [ ] `add --manifest` updates `.hookset.toml` but does not touch git config.
+- [ ] `hookset init` on a repo with a valid `.hookset.toml` writes the self‑checking wrapper commands;
+      a subsequent commit attempt without `hookset` installed prints the install message and fails cleanly.
+- [ ] `hookset init` on a repo without `.hookset.toml` prints a helpful message and exits 0.
+- [ ] `hookset init` resolves `include` paths, merges hooks, and respects the `--strict` flag.
 
-1. **Parse arguments**
-   - `hookset exec --match "*.ts" --match "*.js" -- <command>`.
-   - Environment variable `HOOKSET_EVENT` (set by `hookset run`) to know the event context.
-   - Optionally read config for additional options (like `--only-changed`).
-2. **Determine staged files**
-   - `git diff --cached --name-only --diff-filter=ACMR` (new, modified).
-   - Apply path matching using git’s own `pathspec` or a glob library.
-   - If no files match, exit 0 immediately (skip command).
-3. **Stash‑unmodified workflow**
-   - Create a stash of unstaged changes: `git stash push --include-untracked --keep-index -m "hookset pre-commit"`.
-   - If stash fails (e.g., no changes), continue without stashing.
-   - Run the command with the list of matching files (as arguments? or via stdin? decide). For compatibility with most tools, pass filenames as arguments: `npx eslint file1.ts file2.ts`.
-   - Wait for command completion, capture exit code.
-   - If command modifies files, re‑add them: `git add -- <file list>`.
-   - Always attempt to pop the stash: `git stash pop` (or `git stash pop --index` to restore index state? careful — we want to keep the staged changes after re‑adding. The usual lint‑staged flow: after running linter, they `git add` the files again, then stash pop drops the stash of unstaged changes. The original staged files were already in the index after the stash. So just `git add` after the tool run will update the index with the tool's modifications. Then `git stash pop` restores the working tree unstaged changes. No need for `--index` on pop because the index is already what we want. Test this.)
-   - If the command fails, still pop stash, propagate exit code.
-4. **Handle edge cases**
-   - Deleted files: tool may delete a file; detect and `git rm -- <file>`.
-   - Partial staging: if a file was only partially staged, re‑adding the whole file would stage the entire file. Document as known behaviour (like lint‑staged). Optionally add a `--respect-partial` flag for later.
-   - Submodules: skip (or option to include? No, ignore for now).
-   - Large repos, binary files: stash might be slow; warn if large files are detected.
-5. **Verbose/debug mode** – `--verbose` logs every step, from file filtering to stash creation and command output.
+### Phase 3.1 – Windows Wrapper Format (incorporated into Phase 3)
 
-### Acceptance Criteria
+**Additional Task:**
 
-- [ ] A modified `.js` file that fails eslint results in commit abort and stash is cleanly popped.
-- [ ] When only `.css` files are staged and no JS linter matches, the linter is skipped and exit code 0.
-- [ ] Deleted staged file is properly removed from index after tool run.
-- [ ] Existing unstaged changes are untouched after a successful or failed hook.
-- [ ] Integration test simulates a real pre‑commit hook using both native (Git 2.54) and fallback paths.
+- **Design the self‑checking wrapper for Windows.**  
+  The hook command must be a one‑liner that works on any Windows shell (cmd, PowerShell, Git Bash).
+  - Use a small, committed `.hookset-wrapper.cmd` script that does the presence check and then calls `hookset exec`? (complex, violates “no committed files” principle)
+  - Alternative: use a Git‑portable `sh` invocation if Git for Windows provides `sh` (it does). But `command -v` may be inconsistent.
+  - **Chosen approach:** `hookset init` writes a **per‑OS command** into the config, i.e., the self‑check logic is embedded using `sh` on Unix and a `cmd /c` call on Windows. The hook command is generated **once** at `init` time and tailored to the machine that runs `init`. Document that cross‑OS cloning requires re‑running `hookset init` to regenerate the platform‑appropriate wrapper.
+  - **Phase 6** must also ensure that the `install-action` and installers produce a wrapper that works on the target OS.
+- Test on Windows with PowerShell, cmd, and Git Bash that the missing‑binary message appears correctly.
 
 ---
 
-## Phase 5: Compatibility Layer & `hookset run`
+### Phase 4 — Staging Engine: `hookset exec` (6 weeks)
 
-**Goal:** Seamlessly support Git ≥ 2.54 and older versions, and provide a single entry‑point for fallback hooks.
+**Goal:** The reusable component that Git calls directly via the hook command. It does
+the stash‑filter‑run‑restage‑pop dance. This is the hardest piece.
 
-### Tasks
+#### Tasks
 
-1. **Implement `hookset run <event>`**
-   - Reads all configured hooks for the event from local and global config (using `internal/gitconfig`).
-   - Executes them sequentially respecting `enabled` flag.
-   - Sets `HOOKSET_EVENT` env variable for each execution.
-2. **Auto‑detection in `hookset add`**
-   - At `add` time, run `git version`, compare with 2.54.0.
-   - If ≥ 2.54, write native config and (optionally) print a message that no fallback script is needed.
-   - If < 2.54, write config anyway (for `hookset run` to read) and install fallback script.
-3. **Upgrade path**
-   - If user upgrades Git to ≥ 2.54, `hookset upgrade` can remove fallback scripts and keep native config only.
-4. **Mixed environments** – a repo might be used by multiple developers with different Git versions. The native config alone works for 2.54+, but for older users the fallback script must also be present. `hookset add` could install both if `--legacy` flag is given. Document this.
+1. **Core implementation (`internal/exec`)**
+   - Parse arguments: `hookset exec --match "*.ts" --match "*.js" -- <command>`.
+   - Determine staged files: `git diff --cached --name-only --diff-filter=ACMR`.
+   - Apply path matching (delegate to `git ls-files --cached -- <patterns>` for exact Git‑native matching).
+   - If no files match, exit 0 immediately.
+   - Stash unmodified changes: `git stash push --include-untracked --keep-index -m "hookset pre-commit"`.
+   - If stash fails (conflicts, etc.), abort with a clear error and no index change.
+   - Run the command, passing matching file paths as arguments (fallback: chunk invocations or stdin if argument list would exceed the Windows safe limit of ~8000 characters).
+   - Capture exit code.
+   - Re‑stage files modified by the command: `git add -- <files>`.
+   - If a file was deleted by the formatter, `git rm --cached <file>`.
+   - Pop the stash: `git stash pop`.
+   - Always propagate the command’s exit code.
 
-### Acceptance Criteria
+2. **Edge‑case handling (documented where incomplete)**
+   - **Partial staging:** If a file has some hunks staged and some not, the tool will modify the file,
+     and re‑staging the entire file will **silently include the previously unstaged hunks in the commit**.
+     This is identical to lint‑staged’s default behaviour, and is called out as a **known limitation** in v1.
+   - **Submodules:** skip files inside submodules; do not attempt to stash/unstash across module boundaries.
+   - **Large binary files:** issue a warning if a file >10 MB is about to be stashed; provide an `--allow-large` flag.
+   - **File mode changes:** preserve mode after re‑adding.
+   - **CRLF conversions:** handle the case where `core.autocrlf` or `.gitattributes` cause the working tree to differ from the index after `git add`.
+   - **Worktrees:** detect when the repo belongs to a worktree set; if another worktree might be affected, abort with a clear message that worktrees are not supported in v1.
 
-- [ ] On Git 2.54, adding a hook writes only config, no `.git/hooks/` files.
-- [ ] On Git 2.45, a fallback `.git/hooks/pre-commit` is created and calls `hookset run pre-commit`.
-- [ ] `hookset list` works correctly regardless of fallback state.
-- [ ] Developer with older Git can clone a repo where `hookset add` was used on 2.54; running `hookset install` (or a dedicated command) generates the fallback scripts needed (maybe a `hookset init` command to be run after clone). This task is about designing that workflow.
+3. **Verbose/debug mode**
+   - `--verbose` prints: staged files found, files matched, files excluded, stash SHA, command invocation, files added after command, final stash pop status.
+
+4. **Integration test suite**
+   - Set up a sandbox repo for each edge‑case from the Phase 0 spike.
+   - Parameterised tests that run against Git 2.54 and 2.55+.
+   - Explicit test: “existing unstaged changes remain completely untouched after a successful lint run.”
+   - Explicit test: “a linter that fails leaves the working tree exactly as before (stash properly popped).”
+
+#### Acceptance Criteria
+
+- [ ] All spike scenario tests pass.
+- [ ] A commit with only CSS files and a JS linter hook triggers no lint run and exits 0.
+- [ ] A successful lint run that modifies a file results in the modified file being re‑staged and the working tree clean for the commit.
+- [ ] A failed lint run pops the stash and restores the index and working tree exactly as before `hookset exec` was called.
+- [ ] Verbose mode output is clear enough to debug a real‑world problem.
+- [ ] When argument length would exceed the Windows limit, files are chunked or passed via stdin without error.
 
 ---
 
-## Phase 6: Migration Tools
+### Phase 5 — Migration Tools (2 weeks)
 
-**Goal:** Let users convert existing husky, lefthook, and lint‑staged configurations to `hookset` with one command.
+**Goal:** `hookset migrate` reads a project’s existing hook setup and emits working `hookset add --manifest`
+commands (or a `.hookset.toml`).
 
-### Tasks
+#### Tasks
 
-1. **`hookset migrate --from lint-staged`**
-   - Find `lint-staged` config in `package.json`, `.lintstagedrc`, `lint-staged.config.js` (static evaluation only).
-   - For each pattern–command pair, emit equivalent `hookset add` commands (print or execute with `--yes`).
-   - Handle array of commands per pattern, `--match` for multiple extensions.
-   - Warning if `function` config is used (can't automatically migrate).
-2. **`hookset migrate --from husky`**
-   - Read `.husky/pre-commit` and other hook files.
-   - Parse out the commands (often just `npx lint-staged` or a single runner).
-   - Output `hookset` commands that, if lint‑staged was the only thing, directly calls the linters with `hookset exec`.
-3. **`hookset migrate --from lefthook`**
+1. **`--from lint-staged`**
+   - Find config in `package.json`, `.lintstagedrc`, etc.
+   - For each glob→command pair, output equivalent `hookset add --manifest` with `--match`.
+   - Warn if the config uses function syntax (cannot migrate automatically).
+
+2. **`--from husky`**
+   - Parse `.husky/<event>` shell scripts.
+   - For file‑filtering tasks (e.g., linters on staged files), wrap the command with `hookset exec --match ...`.
+   - For non‑filtering tasks (e.g., `tsc --noEmit`, test suite, `pre-push` checks), output a plain `hookset add` entry with no `--match`; the command runs as‑is without the staging engine.
+   - If the script is simply `npx lint-staged`, fall back to the lint-staged migrator
+
+3. **`--from lefthook`**
    - Parse `lefthook.yml`.
-   - Map each hook’s `commands` (with glob, run, etc.) to `hookset add`.
-4. **`--dry-run`** – print what would be added without changing anything.
-5. **Idempotency** – can run migration multiple times without duplicate hooks (check existing names).
+   - Map `commands` with `glob`, `run`, etc. to `hookset add --manifest`.
+   - Note: parallelism settings are ignored (can be added post‑MVP).
 
-### Acceptance Criteria
+4. **`--dry-run`** — prints what would be added without changing anything.
+5. **`--yes`** — actually writes the manifest (and runs `hookset init` to install).
 
-- [ ] `hookset migrate --from lint-staged --dry-run` on a sample `package.json` prints correct `hookset add` commands.
-- [ ] Running with `--yes` actually writes the hooks and produces a working pre‑commit setup identical in effect.
-- [ ] Migration from husky that had only `npx lint-staged` results in direct linter commands (no lint‑staged left).
-- [ ] Existing `.husky/` directory is untouched (user removes it manually or via hookset’s cleanup prompt).
+#### Acceptance Criteria
 
----
-
-## Phase 7: Distribution & Installation
-
-**Goal:** Make `hookset` trivially installable on any developer machine.
-
-### Tasks
-
-1. **Build the `curl | sh` / `irm | iex` installer**
-   - Script detects OS/arch, downloads the latest binary from GitHub Releases, places it in `~/.local/bin` or `Program Files`.
-   - Add to PATH if possible, or print instructions.
-2. **Homebrew formula** – create `hookset.rb`, submit to homebrew-core or maintain a tap.
-3. **winget / scoop manifests** for Windows.
-4. **NPM thin wrapper** – `packages/npm/` with `postinstall` that downloads the binary for that platform. Expose a `hookset` bin that directly delegates. Useful for CI.
-5. **Test install on clean VMs** for each OS.
-6. **Goreleaser** update to attach `.tar.gz` and `.zip` to releases with correct naming.
-
-### Acceptance Criteria
-
-- [ ] One‑liner install works on fresh macOS, Ubuntu, Windows (via PowerShell).
-- [ ] `brew install hookset` works and puts the binary in PATH.
-- [ ] `npx hookset` downloads the binary on first run and works.
+- [ ] Migrating a standard `lint-staged` setup produces a working `.hookset.toml` + local hooks
+      that match the original linter coverage exactly.
+- [ ] Husky migration that had `lint-staged` at the centre results in direct linter invocations
+      (no leftover `lint-staged` dependency).
+- [ ] Existing husky/lefthook files are not modified; the user can manually remove them afterward.
 
 ---
 
-## Phase 8: Testing & CI Matrix
+### Phase 6 — Distribution: Installers & CI Action (2 weeks)
 
-**Goal:** Ensure reliability across platforms and Git versions.
+**Goal:** Make `hookset` trivially installable on any developer machine and in CI pipelines.
 
-### Tasks
+#### Tasks
 
-1. **Unit tests** for `internal/gitconfig`, `internal/exec` stash logic, migration parsers.
-2. **Integration tests** – use `go test` with real `git` commands, covering Git 2.54 native mode and fallback mode (test against two different Git versions in CI).
-3. **End‑to‑end tests** in Docker containers simulating a developer workflow.
-4. **Windows‑specific tests** – file locking, path separators, PowerShell installer.
-5. **Performance** – ensure stash/pop on a repository with 10k files is still under a second.
-6. **Backward compatibility** – hooks created with future `hookset` versions remain readable.
+1. **`curl | sh` / `irm | iex` installer**
+   - Detect OS/arch, download the latest release binary from GitHub, place in `~/.local/bin` (Unix) or `ProgramFiles` (Windows), add to user’s `PATH`.
+   - Respect `HOOKSET_BINARY_PATH` environment variable: if set, copy from that local path instead of downloading (for air‑gapped environments).
 
-### Acceptance Criteria
+2. **Homebrew formula**
+   - `hookset.rb` for a custom tap (or later homebrew-core).
 
-- [ ] CI matrix includes: ubuntu (latest Git), ubuntu (Git 2.45), macOS, Windows.
-- [ ] All tests pass; no flaky tests.
-- [ ] Benchmark test shows exec time for a no‑op hook is under 50 ms.
+3. **winget and scoop manifests** for Windows.
 
----
+4. **`hookset/install-action`**
+   - A GitHub composite action that downloads the binary and adds it to `$PATH`.
+   - Inputs: `version` (default: latest).
+   - Also respects `HOOKSET_BINARY_PATH` for offline/air‑gapped CI runners.
+   - Used in CI as:
+     ```yaml
+     - uses: hookset/install-action@v1
+       with:
+         version: '1.0.0'
+     - uses: actions/checkout@v4
+     - run: hookset init
+     ```
 
-## Phase 9: Documentation & Community
+5. **Optional NPM thin wrapper (`@hookset/cli`)**
+   - Post‑MVP convenience: a package that downloads the binary on `postinstall` and exposes it as `npx hookset`.
+   - Documented as secondary, not the recommended CI path, and not part of the 1.0 critical path.
 
-**Goal:** Excellent first‑run experience and discoverability.
+#### Acceptance Criteria
 
-### Tasks
-
-1. **README.md** with quickstart, comparison table, install methods.
-2. **`hookset.dev` website** with interactive demo, migration guide.
-3. **Man page** generated from CLI help (`hookset help man` or cobra/doc).
-4. **Shell completions** (bash, zsh, fish, PowerShell).
-5. **Troubleshooting guide** – common stash/pop failures, Windows Defender, CI setup.
-6. **Contributing guide** – how to build, test, add new migration sources.
-
-### Acceptance Criteria
-
-- [ ] A new user can go from zero to running hooks in <5 minutes using only the README.
-- [ ] Website includes a “Playground” that simulates `hookset add`.
-
----
-
-## Phase 10: Post‑MVP Enhancements
-
-Once the core is solid, expand functionality.
-
-### Candidate features (prioritised by community demand)
-
-1. **Parallel execution** – `--jobs N` flag in `hookset exec` to run multiple commands in parallel (like lefthook’s `parallel: true`).
-2. **Hook templates** – `hookset init --template` creates a starter config with common linters.
-3. **`hookset watch`** – file‑watcher mode that runs hooks on save (like `lefthook run --watch`).
-4. **Extended migration** – support for `pre-push` hooks, commit‑msg hooks, etc.
-5. **Plugin system** – allow community‑contributed migration parsers for other tools (e.g., `cargo-husky`, `overcommit`).
-6. **CI‑friendly summary** – `hookset check` to verify hooks are up‑to‑date without running them (for CI linting).
-7. **Graphical installer** for less terminal‑comfortable developers (a small macOS/Win app that installs the binary and adds to PATH).
+- [ ] One‑command install works on fresh macOS, Ubuntu, Windows (PowerShell).
+- [ ] Setting `HOOKSET_BINARY_PATH` skips the download and uses the local binary.
+- [ ] `hookset/install-action` successfully runs `hookset version` in a GitHub Actions job.
+- [ ] Homebrew install command places `hookset` in the user’s PATH.
 
 ---
 
-## Timeline Estimation (rough)
+### Phase 7 — Testing & CI Matrix (2 weeks)
 
-- Phase 0–2: **3 weeks** (research, infrastructure, config)
-- Phase 3–4: **4 weeks** (CLI management & exec engine)
-- Phase 5: **2 weeks** (compatibility & fallback)
-- Phase 6: **2 weeks** (migration)
-- Phase 7–8: **3 weeks** (distribution, testing)
-- Phase 9: **2 weeks** (docs, website)
-- Total: ~16 weeks to a polished 1.0 release by a single full‑time developer.
+**Goal:** Catch regressions across platforms and Git versions.
+
+#### Tasks
+
+1. **CI matrix**
+   - OS: `ubuntu-latest`, `macos-latest`, `windows-latest`.
+   - Git versions: `2.54`, `latest`.
+   - Each job runs unit + integration tests.
+
+2. **End‑to‑end tests**
+   - Dockerised scenarios: “clone a repo with `.hookset.toml`, run `hookset init`, commit a file that fails a linter — hook must block.”
+
+3. **Performance baseline**
+   - `hookset exec` with a no‑op command on a repo of 5,000 staged files should finish in <1s.
+
+4. **Backward compatibility**
+   - Hooks added with an older version of `hookset` remain readable and functional after an upgrade.
+
+#### Acceptance Criteria
+
+- [ ] CI matrix green for all OS/Git combinations.
+- [ ] End‑to‑end test shows the complete workflow from clone to blocked commit.
+- [ ] No regression on common lint‑staged/lefthook user patterns.
+
+---
+
+### Phase 8 — Documentation & Community (2 weeks)
+
+**Goal:** Excellent first‑run experience.
+
+#### Tasks
+
+1. **README** — install, quickstart, comparison table with husky/lefthook. Clearly state Git 2.54+ requirement.
+2. **`hookset.dev` static site** — interactive demo, migration guide.
+3. **Manpage & shell completions** (bash, zsh, fish, pwsh).
+4. **Troubleshooting guide** — stash failures, file‑mode changes, Windows permissions, worktree limitations, partial staging caveats.
+5. **Contributing guide** for new migration parsers or enhancements.
+
+#### Acceptance Criteria
+
+- [ ] A new user can go from nothing to running hooks in <5 minutes using the README alone.
+- [ ] The website’s “Quick setup” snippet is copy‑paste runnable.
+
+---
+
+### Phase 9 — Post‑MVP Enhancements
+
+After 1.0, high‑priority improvements (in order of community demand):
+
+1. **Parallel execution** — `--jobs N` in `hookset exec` to run multiple tools simultaneously.
+   _Note:_ Git 2.55 may introduce native `jobs = N` on hook config; evaluate before building a custom scheduler.
+2. **Hook templates** — `hookset init --template` for a quick starter config.
+3. **Extended migration** — commit‑msg, pre‑push hooks, etc.
+4. **Plugin system for migration sources** — allow community‑supplied parsers.
+5. **`hookset check`** — CI linting of hook config correctness without running hooks.
+6. **Graphical installer** — a small Electron/Tauri app for absolute beginners (very low priority).
+
+---
+
+## Timeline (full‑time solo developer)
+
+| Phase | Duration | Cumulative |
+| ----- | -------- | ---------- |
+| 0     | 3 weeks  | 3 w        |
+| 1     | 2 weeks  | 5 w        |
+| 2     | 2 weeks  | 7 w        |
+| 3     | 2 weeks  | 9 w        |
+| 4     | 6 weeks  | 15 w       |
+| 5     | 2 weeks  | 17 w       |
+| 6     | 2 weeks  | 19 w       |
+| 7     | 2 weeks  | 21 w       |
+| 8     | 2 weeks  | 23 w       |
+
+**~23 weeks to a polished 1.0 release.**
 
 ---
 
 ## Risk Register
 
-| Risk                                         | Mitigation                                                                                                  |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Git 2.54 adoption is slow                    | Ensure flawless fallback; proactively document that pre‑2.54 users still get the same experience.           |
-| Stash conflicts on dirty working trees       | Fail gracefully, guide user to commit or stash manually.                                                    |
-| Windows AV blocking Go binary                | Code‑sign the binary; provide checksums; use known install paths.                                           |
-| Migration breaks complex lint‑staged configs | `--dry-run` and manual review; fallback to running lint‑staged itself inside `hookset exec` as last resort. |
-
----
-
-_This roadmap is a living document. Final decisions on fallback UX and edge‑case handling will be made during Phase 0._
+| Risk                                                                                                 | Likelihood | Impact   | Mitigation                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------------- | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Staging engine edge cases cause data loss or corrupted index                                         | Medium     | Critical | Phase 0 spike, 6‑week implementation, public “known limitations” v1 doc. Fallback to embedded, stripped‑down lint‑staged only as last resort.                                                                     |
+| Git 2.54 not available on a user’s system                                                            | Medium     | High     | Hard requirement documented at install and startup. Installers prompt upgrade; CI action installs correct Git version if needed.                                                                                  |
+| Config scope merging produces incorrect hook ordering                                                | Medium     | High     | Dedicated test suite in Phase 2. Behaviour documented; any deviation from Git’s own ordering is a P1 bug.                                                                                                         |
+| Windows file‑locking / antivirus blocks stash pop                                                    | Medium     | Medium   | CI tests on real Windows environment with Defender. Provide `--no-stash` escape hatch for affected users.                                                                                                         |
+| **`hookset` not installed but hooks are configured** — commit fails with generic “command not found” | **High**   | **High** | Hook command generated by `hookset init` includes a self‑check that prints explicit install instructions before failing.                                                                                          |
+| Bootstrapping confusion (new contributors forget `hookset init` after clone)                         | **Medium** | Medium   | `hookset init` is idempotent; the self‑checking wrapper will tell them `hookset` is missing if they skipped the install entirely. Clone instructions prominently documented; `hookset/install-action` handles CI. |

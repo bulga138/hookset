@@ -1,0 +1,69 @@
+version: 2
+
+project_name: hookset
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: hookset
+    main: ./cmd/hookset
+    binary: hookset
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: hookset
+    builds: [hookset]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: bulga138
+    name: hookset
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+brews:
+  - name: hookset
+    repository:
+      owner: bulga138
+      name: homebrew-tap
+    homepage: "https://hookset.dev"
+    description: "Git 2.54 config-native hook manager — no Husky, no lint-staged"
+    license: "MIT"
+    install: |
+      bin.install "hookset"
+    test: |
+      system "#{bin}/hookset", "version"

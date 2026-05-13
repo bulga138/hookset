@@ -1,0 +1,10 @@
+[[hooks]]
+  name = "go-fmt"
+  event = "pre-commit"
+  match = ["*.go"]
+  command = "go fmt"
+
+[[hooks]]
+  name = "go-test"
+  event = "pre-push"
+  command = "go test ./..."
