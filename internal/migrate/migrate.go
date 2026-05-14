@@ -200,20 +200,21 @@ func migrateHusky(repoRoot string) (*Result, error) {
 
 			// Classify: file-filtering vs non-filtering.
 			// Non-filtering hooks (tsc, tests, etc.) get no --match; they run as-is.
-			// File-filtering hooks are rare in husky scripts without lint-staged,
-			// so we default to no match and let the user add --match manually.
-			res.Entries = append(res.Entries, manifest.Entry{
-				Name:    name,
-				Event:   event,
-				Match:   nil, // no staged-file filtering — runs as plain command
-				Command: cmd,
-			})
+			// File-filtering hooks get default match patterns for the detected tool.
+			var match []string
 			if looksLikeFileFilter(cmd) {
+				match = getDefaultMatchPatterns(cmd)
 				res.warn(fmt.Sprintf(
-					"hook %q looks like a file-filtering command — consider adding a 'match' field to run it through `hookset exec`",
+					"hook %q looks like a file-filtering command — applied default match patterns. Edit .hookset.toml to customize.",
 					name,
 				))
 			}
+			res.Entries = append(res.Entries, manifest.Entry{
+				Name:    name,
+				Event:   event,
+				Match:   match,
+				Command: cmd,
+			})
 		}
 	}
 	return res, nil
@@ -260,6 +261,26 @@ func looksLikeFileFilter(cmd string) bool {
 		}
 	}
 	return false
+}
+
+// getDefaultMatchPatterns returns reasonable file-match patterns for known linting tools.
+func getDefaultMatchPatterns(cmd string) []string {
+	lower := strings.ToLower(cmd)
+	switch {
+	case strings.Contains(lower, "eslint") || strings.Contains(lower, "prettier"):
+		return []string{"*.js", "*.jsx", "*.ts", "*.tsx", "*.mjs", "*.cjs"}
+	case strings.Contains(lower, "stylelint"):
+		return []string{"*.css", "*.scss", "*.sass", "*.less"}
+	case strings.Contains(lower, "tslint"):
+		return []string{"*.ts", "*.tsx"}
+	case strings.Contains(lower, "biome"):
+		return []string{"*.js", "*.ts", "*.jsx", "*.tsx", "*.json"}
+	case strings.Contains(lower, "oxlint"):
+		return []string{"*.js", "*.jsx", "*.ts", "*.tsx", "*.mjs", "*.cjs"}
+	default:
+		// Unknown filter tool — match all, let the tool filter
+		return []string{"*"}
+	}
 }
 
 // ── lefthook ──────────────────────────────────────────────────────────────────

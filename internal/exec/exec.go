@@ -55,7 +55,7 @@ func Run(opts Options) int {
 
 	if git.IsLinkedWorktree() {
 		fmt.Fprintln(os.Stderr, "[hookset] error: linked worktrees are not supported in v1 — skipping hook")
-		fmt.Fprintln(os.Stderr, "         See https://hookset.dev/docs/worktrees for details")
+		fmt.Fprintln(os.Stderr, "         See https://bulga138.github.io/hookset/worktrees for details")
 		return 1
 	}
 
@@ -127,6 +127,10 @@ func Run(opts Options) int {
 
 	toAdd, toRemove := classifyAfterRun(matched)
 	log.step("Re-staging %d file(s), removing %d file(s)", len(toAdd), len(toRemove))
+	if len(toAdd) > 0 {
+		log.step("[WARN] Re-staging entire file(s): %v", toAdd)
+		log.step("   Partial staging note: all changes in these files will be included")
+	}
 
 	if err := git.Add(toAdd); err != nil {
 		fmt.Fprintf(os.Stderr, "[hookset] error re-staging files: %v\n", err)

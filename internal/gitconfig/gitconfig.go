@@ -60,7 +60,7 @@ func AddHook(h Hook, scope git.Scope) error {
 // RemoveHook deletes all hook.<name>.* entries at the given scope.
 func RemoveHook(name string, scope git.Scope) error {
 	r := git.Run("config", string(scope), "--remove-section", sectionKey(name))
-	if !r.OK && !strings.Contains(r.Stderr, "No such section") {
+	if !r.OK && !strings.Contains(strings.ToLower(r.Stderr), "no such section") {
 		return fmt.Errorf("git config --remove-section failed: %s", r.Stderr)
 	}
 	return nil

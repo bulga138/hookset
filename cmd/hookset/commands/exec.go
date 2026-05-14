@@ -25,6 +25,10 @@ It:
   3. Stashes unstaged changes (--keep-index)
   4. Runs the command with matched files as arguments
   5. Re-stages any files modified by the command
+  [WARN]  NOTE: Step 5 re-stages the ENTIRE file for any file modified by the
+     command. If you stage only part of a file (partial staging), the rest
+     of the file will be included in the re-stage. Use --no-stash only if
+     you need to preserve unstaged changes alongside partial staging.
   6. Pops the stash
   7. Exits with the command's exit code
 

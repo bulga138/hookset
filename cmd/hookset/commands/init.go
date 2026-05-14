@@ -280,15 +280,16 @@ func buildWrapperCommand(entry manifest.Entry) string {
 func buildPresenceCheck(binary, installMsg, execCmd string) string {
 	if runtime.GOOS == "windows" {
 		// Git for Windows runs hook commands via sh, so we use sh syntax here too.
-		// Document in README that cross-OS clones should re-run hookset init.
+		// Check PATH first, then current directory (for development workflows).
 		return fmt.Sprintf(
-			`sh -c 'command -v %s >/dev/null 2>&1 || { printf "%s\n" >&2; exit 1; }; exec %s'`,
-			binary, installMsg, execCmd,
+			`sh -c 'command -v %s >/dev/null 2>&1 || { test -f "./%s.exe" && exec "./%s.exe" exec --help >/dev/null 2>&1 || { printf "%%s\n" "%s" >&2; exit 1; }; }; exec %s'`,
+			binary, binary, binary, installMsg, execCmd,
 		)
 	}
+	// Unix: check PATH, then current directory
 	return fmt.Sprintf(
-		`sh -c 'command -v %s >/dev/null 2>&1 || { printf "%s\n" >&2; exit 1; }; exec %s'`,
-		binary, installMsg, execCmd,
+		`sh -c 'command -v %s >/dev/null 2>&1 || { test -f "./%s" && exec "./%s" exec --help >/dev/null 2>&1 || { printf "%%s\n" "%s" >&2; exit 1; }; }; exec %s'`,
+		binary, binary, binary, installMsg, execCmd,
 	)
 }
 
