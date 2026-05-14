@@ -5,6 +5,9 @@ on:
     tags:
       - "v*"
 
+# Required for:
+# - Pushing to GitHub Releases (this repo)
+# - Pushing formula to homebrew-hookset repo
 permissions:
   contents: write
 
@@ -24,9 +27,14 @@ jobs:
       - name: Run tests
         run: go test ./...
 
-      - uses: goreleaser/goreleaser-action@v6
+      - name: Run Goreleaser
+        uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
           args: release --clean
         env:
+          # GITHUB_TOKEN is built-in and has write access to this repo
+          # For pushing to homebrew-hookset, goreleaser needs a token
+          # with access to that repo. Use the same token since you're
+          # the owner of both repos.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

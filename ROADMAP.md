@@ -83,7 +83,7 @@ every tool we intend to replace or migrate.
    - Design the self‑checking wrapper command: `hookset init` writes a `command` that starts with a presence
      check, e.g.:
      ```
-     sh -c 'command -v hookset >/dev/null 2>&1 || { echo "hookset is not installed. Install with: brew install hookset   (or visit https://hookset.dev)" >&2; exit 1; }; exec hookset exec --match ... -- ...'
+     sh -c 'command -v hookset >/dev/null 2>&1 || { echo "hookset is not installed. Install with: brew install hookset   (or visit https://bulga138.github.io/hookset)" >&2; exit 1; }; exec hookset exec --match ... -- ...'
      ```
      This ensures the commit fails with a human‑readable message if `hookset` is missing.
 
@@ -104,10 +104,10 @@ every tool we intend to replace or migrate.
 
 #### Acceptance Criteria
 
-- [ ] Internal design note on Git 2.54 hook semantics and edge cases.
-- [ ] Migration mapping tables for husky, lefthook, lint-staged.
-- [ ] Finalised `.hookset.toml` specification (fields, types, allowed events, `include` semantics).
-- [ ] Spike results: list of staging engine risks and a clear “go / no‑go” decision.
+- [x] Internal design note on Git 2.54 hook semantics and edge cases.
+- [x] Migration mapping tables for husky, lefthook, lint-staged.
+- [x] Finalised `.hookset.toml` specification (fields, types, allowed events, `include` semantics).
+- [x] Spike results: list of staging engine risks and a clear “go / no‑go” decision.
 
 ---
 
@@ -145,10 +145,10 @@ hookset/
 
 #### Acceptance Criteria
 
-- [ ] `go build ./cmd/hookset` produces a binary.
-- [ ] CI passes: lint, build, attach to release.
-- [ ] `hookset --help` shows a clean command tree.
-- [ ] Running `hookset` on Git < 2.54 prints a specific error directing the user to upgrade.
+- [x] `go build ./cmd/hookset` produces a binary.
+- [x] CI passes: lint, build, attach to release.
+- [x] `hookset --help` shows a clean command tree.
+- [x] Running `hookset` on Git < 2.54 prints a specific error directing the user to upgrade.
 
 ---
 
@@ -182,12 +182,12 @@ hookset/
 
 #### Acceptance Criteria
 
-- [ ] Unit tests for all get/add/remove/enable operations on a temporary repo.
-- [ ] A hook with three `match` patterns results in three `hook.name.match` lines.
-- [ ] Scope ordering tests pass and are documented as the canonical behaviour.
-- [ ] An existing `.hookset.toml` can be parsed and round‑tripped without data loss.
-- [ ] Including a shared TOML file merges hooks correctly, with project overrides respected.
-- [ ] Missing included file produces a warning; with `--strict` it produces a non‑zero exit.
+- [x] Unit tests for all get/add/remove/enable operations on a temporary repo.
+- [x] A hook with three `match` patterns results in three `hook.name.match` lines.
+- [x] Scope ordering tests pass and are documented as the canonical behaviour.
+- [x] An existing `.hookset.toml` can be parsed and round‑tripped without data loss.
+- [x] Including a shared TOML file merges hooks correctly, with project overrides respected.
+- [x] Missing included file produces a warning; with `--strict` it produces a non‑zero exit.
 
 ---
 
@@ -226,12 +226,12 @@ hookset/
 
 #### Acceptance Criteria
 
-- [ ] Full lifecycle: `add` (personal) → `list` → `disable` → `enable` → `remove` works.
-- [ ] `add --manifest` updates `.hookset.toml` but does not touch git config.
-- [ ] `hookset init` on a repo with a valid `.hookset.toml` writes the self‑checking wrapper commands;
+- [x] Full lifecycle: `add` (personal) → `list` → `disable` → `enable` → `remove` works.
+- [x] `add --manifest` updates `.hookset.toml` but does not touch git config.
+- [x] `hookset init` on a repo with a valid `.hookset.toml` writes the self‑checking wrapper commands;
       a subsequent commit attempt without `hookset` installed prints the install message and fails cleanly.
-- [ ] `hookset init` on a repo without `.hookset.toml` prints a helpful message and exits 0.
-- [ ] `hookset init` resolves `include` paths, merges hooks, and respects the `--strict` flag.
+- [x] `hookset init` on a repo without `.hookset.toml` prints a helpful message and exits 0.
+- [x] `hookset init` resolves `include` paths, merges hooks, and respects the `--strict` flag.
 
 ### Phase 3.1 – Windows Wrapper Format (incorporated into Phase 3)
 
@@ -289,12 +289,12 @@ the stash‑filter‑run‑restage‑pop dance. This is the hardest piece.
 
 #### Acceptance Criteria
 
-- [ ] All spike scenario tests pass.
-- [ ] A commit with only CSS files and a JS linter hook triggers no lint run and exits 0.
-- [ ] A successful lint run that modifies a file results in the modified file being re‑staged and the working tree clean for the commit.
-- [ ] A failed lint run pops the stash and restores the index and working tree exactly as before `hookset exec` was called.
-- [ ] Verbose mode output is clear enough to debug a real‑world problem.
-- [ ] When argument length would exceed the Windows limit, files are chunked or passed via stdin without error.
+- [x] All spike scenario tests pass.
+- [x] A commit with only CSS files and a JS linter hook triggers no lint run and exits 0.
+- [x] A successful lint run that modifies a file results in the modified file being re‑staged and the working tree clean for the commit.
+- [x] A failed lint run pops the stash and restores the index and working tree exactly as before `hookset exec` was called.
+- [x] Verbose mode output is clear enough to debug a real‑world problem.
+- [x] When argument length would exceed the Windows limit, files are chunked or passed via stdin without error.
 
 ---
 
@@ -326,11 +326,11 @@ commands (or a `.hookset.toml`).
 
 #### Acceptance Criteria
 
-- [ ] Migrating a standard `lint-staged` setup produces a working `.hookset.toml` + local hooks
+- [x] Migrating a standard `lint-staged` setup produces a working `.hookset.toml` + local hooks
       that match the original linter coverage exactly.
-- [ ] Husky migration that had `lint-staged` at the centre results in direct linter invocations
+- [x] Husky migration that had `lint-staged` at the centre results in direct linter invocations
       (no leftover `lint-staged` dependency).
-- [ ] Existing husky/lefthook files are not modified; the user can manually remove them afterward.
+- [x] Existing husky/lefthook files are not modified; the user can manually remove them afterward.
 
 ---
 
@@ -368,10 +368,10 @@ commands (or a `.hookset.toml`).
 
 #### Acceptance Criteria
 
-- [ ] One‑command install works on fresh macOS, Ubuntu, Windows (PowerShell).
-- [ ] Setting `HOOKSET_BINARY_PATH` skips the download and uses the local binary.
-- [ ] `hookset/install-action` successfully runs `hookset version` in a GitHub Actions job.
-- [ ] Homebrew install command places `hookset` in the user’s PATH.
+- [x] One‑command install works on fresh macOS, Ubuntu, Windows (PowerShell).
+- [x] Setting `HOOKSET_BINARY_PATH` skips the download and uses the local binary.
+- [x] `hookset/install-action` successfully runs `hookset version` in a GitHub Actions job.
+- [x] Homebrew install command places `hookset` in the user’s PATH.
 
 ---
 
@@ -397,9 +397,9 @@ commands (or a `.hookset.toml`).
 
 #### Acceptance Criteria
 
-- [ ] CI matrix green for all OS/Git combinations.
-- [ ] End‑to‑end test shows the complete workflow from clone to blocked commit.
-- [ ] No regression on common lint‑staged/lefthook user patterns.
+- [x] CI matrix green for all OS/Git combinations.
+- [x] End‑to‑end test shows the complete workflow from clone to blocked commit.
+- [x] No regression on common lint‑staged/lefthook user patterns.
 
 ---
 
@@ -410,15 +410,15 @@ commands (or a `.hookset.toml`).
 #### Tasks
 
 1. **README** — install, quickstart, comparison table with husky/lefthook. Clearly state Git 2.54+ requirement.
-2. **`hookset.dev` static site** — interactive demo, migration guide.
+2. **`https://bulga138.github.io/hookset` static site** — interactive demo, migration guide.
 3. **Manpage & shell completions** (bash, zsh, fish, pwsh).
 4. **Troubleshooting guide** — stash failures, file‑mode changes, Windows permissions, worktree limitations, partial staging caveats.
 5. **Contributing guide** for new migration parsers or enhancements.
 
 #### Acceptance Criteria
 
-- [ ] A new user can go from nothing to running hooks in <5 minutes using the README alone.
-- [ ] The website’s “Quick setup” snippet is copy‑paste runnable.
+- [x] A new user can go from nothing to running hooks in <5 minutes using the README alone.
+- [x] The website’s “Quick setup” snippet is copy‑paste runnable.
 
 ---
 
@@ -436,31 +436,13 @@ After 1.0, high‑priority improvements (in order of community demand):
 
 ---
 
-## Timeline (full‑time solo developer)
-
-| Phase | Duration | Cumulative |
-| ----- | -------- | ---------- |
-| 0     | 3 weeks  | 3 w        |
-| 1     | 2 weeks  | 5 w        |
-| 2     | 2 weeks  | 7 w        |
-| 3     | 2 weeks  | 9 w        |
-| 4     | 6 weeks  | 15 w       |
-| 5     | 2 weeks  | 17 w       |
-| 6     | 2 weeks  | 19 w       |
-| 7     | 2 weeks  | 21 w       |
-| 8     | 2 weeks  | 23 w       |
-
-**~23 weeks to a polished 1.0 release.**
-
----
-
 ## Risk Register
 
-| Risk                                                                                                 | Likelihood | Impact   | Mitigation                                                                                                                                                                                                        |
-| ---------------------------------------------------------------------------------------------------- | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Staging engine edge cases cause data loss or corrupted index                                         | Medium     | Critical | Phase 0 spike, 6‑week implementation, public “known limitations” v1 doc. Fallback to embedded, stripped‑down lint‑staged only as last resort.                                                                     |
-| Git 2.54 not available on a user’s system                                                            | Medium     | High     | Hard requirement documented at install and startup. Installers prompt upgrade; CI action installs correct Git version if needed.                                                                                  |
-| Config scope merging produces incorrect hook ordering                                                | Medium     | High     | Dedicated test suite in Phase 2. Behaviour documented; any deviation from Git’s own ordering is a P1 bug.                                                                                                         |
-| Windows file‑locking / antivirus blocks stash pop                                                    | Medium     | Medium   | CI tests on real Windows environment with Defender. Provide `--no-stash` escape hatch for affected users.                                                                                                         |
-| **`hookset` not installed but hooks are configured** — commit fails with generic “command not found” | **High**   | **High** | Hook command generated by `hookset init` includes a self‑check that prints explicit install instructions before failing.                                                                                          |
-| Bootstrapping confusion (new contributors forget `hookset init` after clone)                         | **Medium** | Medium   | `hookset init` is idempotent; the self‑checking wrapper will tell them `hookset` is missing if they skipped the install entirely. Clone instructions prominently documented; `hookset/install-action` handles CI. |
+| Risk                                                                                                 | Likelihood | Impact   | Status    | Mitigation                                                                                                                |
+| ---------------------------------------------------------------------------------------------------- | ---------- | -------- | --------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Staging engine edge cases cause data loss or corrupted index                                         | Medium     | Critical | Mitigated | Phase 0 spike, 6‑week implementation, public "known limitations" doc. Comprehensive tests in Phase 7.                     |
+| Git 2.54 not available on a user's system                                                            | Medium     | High     | Mitigated | Hard requirement documented at install and startup. Startup check implemented in main.go.                                 |
+| Config scope merging produces incorrect hook ordering                                                | Medium     | High     | Mitigated | Dedicated test suite in Phase 2. Behaviour documented; tests verify correct ordering.                                     |
+| Windows file‑locking / antivirus blocks stash pop                                                    | Medium     | Medium   | Mitigated | CI tests on Windows. `--no-stash` flag implemented for escape hatch.                                                      |
+| **`hookset` not installed but hooks are configured** — commit fails with generic "command not found" | **High**   | **High** | Mitigated | Self‑checking wrapper command generated by `hookset init` prints explicit install instructions.                           |
+| Bootstrapping confusion (new contributors forget `hookset init` after clone)                         | **Medium** | Medium   | Mitigated | `hookset init` is idempotent; wrapper tells users `hookset` is missing if skipped. Init wizard and bootstrap implemented. |

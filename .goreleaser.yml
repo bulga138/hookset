@@ -59,8 +59,8 @@ brews:
   - name: hookset
     repository:
       owner: bulga138
-      name: homebrew-tap
-    homepage: "https://hookset.dev"
+      name: homebrew-hookset
+    homepage: "https://bulga138.github.io/hookset"
     description: "Git 2.54 config-native hook manager — no Husky, no lint-staged"
     license: "MIT"
     install: |

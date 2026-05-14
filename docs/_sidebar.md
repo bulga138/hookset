@@ -1,0 +1,23 @@
+- [Home](/)
+- Getting Started
+  - [Installation](getting-started/installation.md)
+  - [Quick Start](getting-started/quickstart.md)
+  - [Configuration](getting-started/configuration.md)
+- Commands
+  - [init](commands/init.md)
+  - [add](commands/add.md)
+  - [remove](commands/remove.md)
+  - [list](commands/list.md)
+  - [disable / enable](commands/disable.md)
+  - [exec](commands/exec.md)
+  - [migrate](commands/migrate.md)
+- Migration
+  - [From lint-staged](migration/lint-staged.md)
+  - [From husky](migration/husky.md)
+  - [From lefthook](migration/lefthook.md)
+- Troubleshooting
+  - [Common Issues](troubleshooting/common-issues.md)
+  - [Windows](troubleshooting/windows.md)
+  - [Worktrees](worktrees.md)
+- Contributing
+  - [Contributing](contributing/contributing.md)
