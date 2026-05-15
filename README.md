@@ -32,7 +32,6 @@ hookset init        # reads .hookset.toml, writes [hook] sections to .git/config
 git commit -m "fix: something"
 ```
 
-````
 
 ## Configuration
 
