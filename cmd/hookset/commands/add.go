@@ -16,6 +16,7 @@ var (
 	addEvent    string
 	addManifest bool
 	addGlobal   bool
+	addDirect   bool
 )
 
 var addCmd = &cobra.Command{
@@ -79,6 +80,8 @@ func init() {
 		"Append to .hookset.toml instead of writing git config")
 	addCmd.Flags().BoolVar(&addGlobal, "global", false,
 		"Write to ~/.gitconfig (ignored when --manifest is set)")
+	addCmd.Flags().BoolVar(&addDirect, "direct", false,
+		"Generate simple command without hookset wrapper")
 	rootCmd.AddCommand(addCmd)
 }
 
@@ -97,7 +100,7 @@ func addToManifest(entry manifest.Entry) error {
 }
 
 func addToConfig(entry manifest.Entry, scope git.Scope) error {
-	wrapCmd := buildWrapperCommand(entry)
+	wrapCmd := buildWrapperCommand(entry, addDirect)
 	h := gitconfig.Hook{
 		Name:    entry.Name,
 		Event:   entry.Event,

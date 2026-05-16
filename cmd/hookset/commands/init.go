@@ -25,6 +25,7 @@ var (
 	initUninstall     bool
 	initRecursive     bool
 	initTemplate      string
+	initDirect        bool
 )
 
 var initCmd = &cobra.Command{
@@ -300,7 +301,7 @@ them into a single hook configuration.`,
 				h := gitconfig.Hook{
 					Name:    entry.Name,
 					Event:   entry.Event,
-					Command: buildWrapperCommand(entry),
+					Command: buildWrapperCommand(entry, initDirect),
 					Matches: entry.Match,
 					Enabled: true,
 				}
@@ -386,6 +387,8 @@ func init() {
 		"Discover .hookset.toml in subdirectories and merge them")
 	initCmd.Flags().StringVar(&initTemplate, "template", "",
 		"Generate config from template (typescript, python, go, rust, monorepo)")
+	initCmd.Flags().BoolVar(&initDirect, "direct", false,
+		"Generate simple commands without hookset wrapper (no file filtering, no stash)")
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -490,10 +493,16 @@ func discoverAndMergeRecursive(root string, opts manifest.ReadOptions) ([]manife
 // buildWrapperCommand constructs the self-checking hook command stored in git config.
 // It is tailored to the OS running hookset init.
 //
+// If direct is true, returns the command without the hookset wrapper.
 // Unix:    sh -c 'command -v hookset >/dev/null 2>&1 || { echo "..." >&2; exit 1; }; exec hookset exec ...'
 // Windows: cmd /c "where hookset >nul 2>&1 || (echo ... 1>&2 & exit /b 1) & hookset exec ..."
-func buildWrapperCommand(entry manifest.Entry) string {
-	hooksetInstallMsg := "hookset is not installed. Visit https://hookset.dev"
+func buildWrapperCommand(entry manifest.Entry, direct bool) string {
+	// Direct mode: just return the command without hookset wrapper
+	if direct {
+		return entry.Command
+	}
+
+	hooksetInstallMsg := "hookset is not installed. See: https://bulga138.github.io/hookset/"
 
 	// Build the hookset exec invocation.
 	var execParts []string
@@ -522,17 +531,17 @@ func buildWrapperCommand(entry manifest.Entry) string {
 }
 
 func buildPresenceCheck(binary, installMsg, execCmd string) string {
+	// Check PATH first, then current directory (for development workflows).
+	// On Windows, also checks for .exe extension.
 	if runtime.GOOS == "windows" {
-		// Git for Windows runs hook commands via sh, so we use sh syntax here too.
-		// Check PATH first, then current directory (for development workflows).
 		return fmt.Sprintf(
-			`sh -c 'command -v %s >/dev/null 2>&1 || { test -f "./%s.exe" && exec "./%s.exe" exec --help >/dev/null 2>&1 || { printf "%%s\n" "%s" >&2; exit 1; }; }; exec %s'`,
+			`sh -c 'command -v %s >/dev/null 2>&1 || { test -f "./%s.exe" && exec "./%s.exe" exec --help >/dev/null 2>&1 || { printf "%%s\\n" "%s" >&2; exit 1; }; }; exec %s'`,
 			binary, binary, binary, installMsg, execCmd,
 		)
 	}
-	// Unix: check PATH, then current directory
+	// Unix
 	return fmt.Sprintf(
-		`sh -c 'command -v %s >/dev/null 2>&1 || { test -f "./%s" && exec "./%s" exec --help >/dev/null 2>&1 || { printf "%%s\n" "%s" >&2; exit 1; }; }; exec %s'`,
+		`sh -c 'command -v %s >/dev/null 2>&1 || { test -f "./%s" && exec "./%s" exec --help >/dev/null 2>&1 || { printf "%%s\\n" "%s" >&2; exit 1; }; }; exec %s'`,
 		binary, binary, binary, installMsg, execCmd,
 	)
 }
