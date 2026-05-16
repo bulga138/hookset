@@ -31,7 +31,7 @@ git commit -m "fix: something"
 ## Requirements
 
 - **Git 2.54 or later** (native `[hook]` config sections)
-- **Go 1.24** (for development builds)
+- **Go 1.25** (for development builds)
 
 ## Installation
 

@@ -31,7 +31,7 @@ hookset/
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.25+
 - Git 2.54+
 - Make
 
@@ -48,13 +48,13 @@ make run        # Build and run
 
 ### Makefile Commands
 
-| Command | Description |
-|---------|-------------|
-| `make build` | Production build with version info |
-| `make build-dev` | Fast development build |
-| `make test` | Run all tests with verbose output |
-| `make run` | Build and run hookset |
-| `make lint` | Run golangci-lint |
+| Command          | Description                        |
+| ---------------- | ---------------------------------- |
+| `make build`     | Production build with version info |
+| `make build-dev` | Fast development build             |
+| `make test`      | Run all tests with verbose output  |
+| `make run`       | Build and run hookset              |
+| `make lint`      | Run golangci-lint                  |
 
 ## Testing
 
@@ -105,6 +105,7 @@ To add support for a new hook tool in `hookset migrate`:
 4. Update the help text in `cmd/hookset/commands/migrate.go`
 
 Example structure:
+
 ```go
 // Add source constant
 const SourceMyTool Source = "mytool"
@@ -152,6 +153,7 @@ test: add migration tests for lefthook
 ## Reporting Issues
 
 Include:
+
 - hookset version (`hookset version`)
 - Git version (`git --version`)
 - Operating system

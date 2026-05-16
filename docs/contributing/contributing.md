@@ -6,7 +6,7 @@ Thank you for your interest in contributing to hookset!
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.25+
 - Git 2.54+
 - Make
 

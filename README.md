@@ -86,7 +86,7 @@ The stash/pop cycle ensures your working tree is never polluted, even if the lin
 ## Requirements
 
 - **Git 2.54 or later** (native `[hook]` config sections)
-- **Go 1.24** (for development builds)
+- **Go 1.25** (for development builds)
 
 ## Install
 
