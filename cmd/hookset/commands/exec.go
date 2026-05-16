@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	internexec "github.com/bulga138/hookset/internal/exec"
 	"github.com/spf13/cobra"
@@ -11,6 +13,7 @@ var (
 	execMatches    []string
 	execAllowLarge bool
 	execNoStash    bool
+	execSummary    bool
 )
 
 var execCmd = &cobra.Command{
@@ -32,6 +35,9 @@ It:
   6. Pops the stash
   7. Exits with the command's exit code
 
+Environment:
+  HOOKSET_SKIP   Comma-separated hook names to skip (e.g., HOOKSET_SKIP=eslint,prettier)
+
 Example (as written into git config by hookset init):
   hookset exec --match "*.ts" --match "*.js" -- npx eslint --cache --fix`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -40,16 +46,52 @@ Example (as written into git config by hookset init):
 			return cmd.Usage()
 		}
 
+		// Check HOOKSET_SKIP - extract hook name from command for filtering
+		// The hook name is typically the first --match pattern or derived from the command
+		hookName := extractHookName(execMatches, command)
+		if hookName != "" {
+			skipEnv := os.Getenv("HOOKSET_SKIP")
+			if skipEnv != "" {
+				skipped := strings.Split(skipEnv, ",")
+				for _, s := range skipped {
+					if strings.TrimSpace(s) == hookName {
+						fmt.Printf("[hookset] Skipping %s (HOOKSET_SKIP)\n", hookName)
+						os.Exit(0)
+						return nil
+					}
+				}
+			}
+		}
+
 		code := internexec.Run(internexec.Options{
 			Patterns:   execMatches,
 			Command:    command,
 			Verbose:    verbose,
 			AllowLarge: execAllowLarge,
 			NoStash:    execNoStash,
+			Summary:    execSummary,
 		})
 		os.Exit(code)
 		return nil
 	},
+}
+
+// extractHookName tries to extract a meaningful hook name for HOOKSET_SKIP matching.
+// It looks at the command to determine the hook name.
+func extractHookName(matches []string, command []string) string {
+	if len(matches) > 0 {
+		// Use the first match pattern as a hint - strip glob to get base name
+		// e.g., "*.ts" -> "ts", "packages/frontend/*.ts" -> "frontend-ts"
+		for _, m := range matches {
+			// Return the pattern as-is for matching
+			return m
+		}
+	}
+	// Fallback to command name
+	if len(command) > 0 {
+		return command[0]
+	}
+	return ""
 }
 
 func init() {
@@ -59,5 +101,7 @@ func init() {
 		"Suppress warning for staged files >10 MB")
 	execCmd.Flags().BoolVar(&execNoStash, "no-stash", false,
 		"Disable stash/pop cycle (escape hatch for Windows locking issues)")
+	execCmd.Flags().BoolVar(&execSummary, "summary", false,
+		"Print summary table after hook runs")
 	rootCmd.AddCommand(execCmd)
 }

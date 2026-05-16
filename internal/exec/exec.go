@@ -30,6 +30,8 @@ type Options struct {
 	AllowLarge bool
 	// NoStash disables the stash/pop cycle (escape hatch for Windows issues).
 	NoStash bool
+	// Summary enables summary table output after hook runs.
+	Summary bool
 }
 
 const largeBytesThreshold = 10 * 1024 * 1024 // 10 MB
@@ -144,7 +146,22 @@ func Run(opts Options) int {
 	}
 
 	log.info("Done ✓")
+
+	// Print summary if requested
+	if opts.Summary {
+		printSummary(opts.Command, matched, exitCode == 0)
+	}
+
 	return 0
+}
+
+// printSummary prints a compact table of hook execution results.
+func printSummary(command []string, files []string, success bool) {
+	status := "✓"
+	if !success {
+		status = "✗"
+	}
+	fmt.Printf("[hookset] %s %s (%d files)\n", status, command[0], len(files))
 }
 
 // runCommand executes the tool against the matched files.
