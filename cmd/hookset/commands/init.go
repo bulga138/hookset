@@ -11,6 +11,7 @@ import (
 	"github.com/bulga138/hookset/internal/gitconfig"
 	"github.com/bulga138/hookset/internal/manifest"
 	"github.com/bulga138/hookset/internal/scanner"
+	"github.com/bulga138/hookset/internal/templates"
 	"github.com/bulga138/hookset/internal/ui/init_view"
 	isatty "github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -22,6 +23,8 @@ var (
 	initNoInteractive bool
 	initDryRun        bool
 	initUninstall     bool
+	initRecursive     bool
+	initTemplate      string
 )
 
 var initCmd = &cobra.Command{
@@ -35,7 +38,10 @@ the commit will fail with a clear installation message rather than a cryptic
 "command not found" error.
 
 Running hookset init multiple times is safe — it removes and rewrites each
-hook entry (idempotent).`,
+hook entry (idempotent).
+
+Use --recursive to discover .hookset.toml files in subdirectories and merge
+them into a single hook configuration.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// 1. Handle Uninstall first
 		if initUninstall {
@@ -48,7 +54,6 @@ hook entry (idempotent).`,
 		}
 
 		var entries []manifest.Entry
-		tomlPath := filepath.Join(root, manifest.Filename)
 
 		opts := manifest.ReadOptions{
 			StrictIncludes: initStrict,
@@ -57,41 +62,137 @@ hook entry (idempotent).`,
 			},
 		}
 
-		// 2. Handle Bootstrap if file is missing
-		if _, err := os.Stat(tomlPath); os.IsNotExist(err) {
-			if initNoInteractive {
-				return fmt.Errorf("no .hookset.toml found and running in non-interactive mode")
-			}
-
-			fmt.Println("[hookset] No manifest found. Scanning project...")
-			detected := scanner.Scan(root)
-
-			actions, err := init_view.RunBootstrapWizard(detected)
+		// Handle recursive mode
+		if initRecursive {
+			entries, err = discoverAndMergeRecursive(root, opts)
 			if err != nil {
-				return err
+				return fmt.Errorf("recursive init failed: %w", err)
 			}
-			if actions == nil {
-				fmt.Println("[hookset] Bootstrap cancelled.")
-				return nil
+		} else if initTemplate != "" {
+			// Handle template mode
+			tomlPath := filepath.Join(root, manifest.Filename)
+
+			// Parse template names (comma-separated)
+			templateNames := strings.Split(initTemplate, ",")
+			for i := range templateNames {
+				templateNames[i] = strings.TrimSpace(templateNames[i])
 			}
 
-			// Filter to only install actions for the manifest
-			var selected []manifest.Entry
-			for i, entry := range detected {
-				if actions[i] == init_view.ActionInstall {
-					selected = append(selected, entry)
+			// Generate TOML content
+			content, err := templates.Generate(templateNames)
+			if err != nil {
+				return fmt.Errorf("template error: %w", err)
+			}
+
+			// Check if file exists
+			exists := false
+			if _, err := os.Stat(tomlPath); err == nil {
+				exists = true
+			}
+
+			if exists && !initDryRun && !initNoInteractive {
+				fmt.Printf("[hookset] %s already exists. Overwrite? [y/N] ", manifest.Filename)
+				var answer string
+				if _, err := fmt.Scanln(&answer); err != nil {
+					answer = ""
+				}
+				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+					fmt.Println("[hookset] Aborted.")
+					return nil
 				}
 			}
 
-			if err := manifest.Write(tomlPath, selected); err != nil {
-				return fmt.Errorf("failed to save manifest: %w", err)
+			if initDryRun {
+				fmt.Println("[hookset] DRY RUN: Generated config:")
+				fmt.Println(content)
+				return nil
 			}
-			fmt.Printf("[hookset] Created %s\n", manifest.Filename)
-			entries = selected
-		} else {
+
+			if err := os.WriteFile(tomlPath, []byte(content), 0644); err != nil {
+				return fmt.Errorf("writing template: %w", err)
+			}
+			fmt.Printf("[hookset] Created %s from template(s): %s\n", manifest.Filename, initTemplate)
+
+			// Read back the generated entries
 			entries, err = manifest.Read(tomlPath, opts)
 			if err != nil {
-				return fmt.Errorf("reading manifest: %w", err)
+				return fmt.Errorf("reading generated manifest: %w", err)
+			}
+		} else {
+			// Standard single-file mode
+			tomlPath := filepath.Join(root, manifest.Filename)
+
+			// 2. Handle Bootstrap if file is missing
+			if _, err := os.Stat(tomlPath); os.IsNotExist(err) {
+				if initNoInteractive {
+					return fmt.Errorf("no .hookset.toml found and running in non-interactive mode")
+				}
+
+				// Ask user: auto-detect or select templates?
+				fmt.Println("[hookset] No manifest found.")
+				fmt.Println("Choose how to set up hooks:")
+				fmt.Println("  1) Auto-detect project type (scanner)")
+				fmt.Println("  2) Select from templates")
+				fmt.Print("Enter choice (1/2): ")
+
+				var choice string
+				if _, err := fmt.Scanln(&choice); err != nil {
+					choice = "1" // default to auto-detect
+				}
+				choice = strings.TrimSpace(choice)
+
+				var selected []manifest.Entry
+
+				if choice == "2" {
+					// Template picker mode - allows selecting individual hooks
+					selectedEntries, err := init_view.RunTemplatePicker()
+					if err != nil {
+						return fmt.Errorf("template picker failed: %w", err)
+					}
+					if selectedEntries == nil {
+						fmt.Println("[hookset] Template selection cancelled.")
+						return nil
+					}
+
+					// Write the selected entries to manifest
+					if err := manifest.Write(tomlPath, selectedEntries); err != nil {
+						return fmt.Errorf("writing manifest: %w", err)
+					}
+					fmt.Printf("[hookset] Created %s with %d hook(s)\n", manifest.Filename, len(selectedEntries))
+
+					entries = selectedEntries
+				} else {
+					// Auto-detect mode (default)
+					fmt.Println("[hookset] Scanning project...")
+					detected := scanner.Scan(root)
+
+					actions, err := init_view.RunBootstrapWizard(detected)
+					if err != nil {
+						return err
+					}
+					if actions == nil {
+						fmt.Println("[hookset] Bootstrap cancelled.")
+						return nil
+					}
+
+					// Filter to only install actions for the manifest
+					for i, entry := range detected {
+						if actions[i] == init_view.ActionInstall {
+							selected = append(selected, entry)
+						}
+					}
+
+					if err := manifest.Write(tomlPath, selected); err != nil {
+						return fmt.Errorf("failed to save manifest: %w", err)
+					}
+					fmt.Printf("[hookset] Created %s\n", manifest.Filename)
+					entries = selected
+				}
+			} else {
+				entries, err = manifest.Read(tomlPath, opts)
+				if err != nil {
+					return fmt.Errorf("reading manifest: %w", err)
+				}
 			}
 		}
 
@@ -240,7 +341,109 @@ func init() {
 		"Show what would be installed without modifying .git/config")
 	initCmd.Flags().BoolVar(&initUninstall, "uninstall", false,
 		"Remove all hookset-managed hooks from .git/config and exit")
+	initCmd.Flags().BoolVar(&initRecursive, "recursive", false,
+		"Discover .hookset.toml in subdirectories and merge them")
+	initCmd.Flags().StringVar(&initTemplate, "template", "",
+		"Generate config from template (typescript, python, go, rust, monorepo)")
 	rootCmd.AddCommand(initCmd)
+}
+
+// discoverAndMergeRecursive walks the repository tree, finds all .hookset.toml
+// files, and merges them into a single list of entries. Subdirectory paths are
+// prepended to match patterns so that "*.ts" in "packages/frontend" becomes
+// "packages/frontend/*.ts" when registered in Git's config.
+func discoverAndMergeRecursive(root string, opts manifest.ReadOptions) ([]manifest.Entry, error) {
+	fmt.Println("[hookset] Discovering .hookset.toml files...")
+
+	// Find all .hookset.toml files
+	var tomlFiles []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		// Skip .git directory
+		if info.IsDir() && info.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		if !info.IsDir() && info.Name() == manifest.Filename {
+			tomlFiles = append(tomlFiles, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walking directory: %w", err)
+	}
+
+	if len(tomlFiles) == 0 {
+		return nil, fmt.Errorf("no %s files found in repository", manifest.Filename)
+	}
+
+	fmt.Printf("[hookset] Found %d config file(s)\n", len(tomlFiles))
+
+	// Merge entries from all files
+	// Deeper paths override shallower ones with same name
+	type configEntry struct {
+		entry   manifest.Entry
+		relPath string // relative to root, for priority
+		depth   int    // path depth for priority
+	}
+
+	var allEntries []configEntry
+	for _, tf := range tomlFiles {
+		relPath, err := filepath.Rel(root, tf)
+		if err != nil {
+			continue
+		}
+
+		entries, err := manifest.Read(tf, opts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[hookset] warning: reading %s: %v\n", relPath, err)
+			continue
+		}
+
+		dir := filepath.Dir(relPath)
+		depth := strings.Count(dir, string(filepath.Separator)) + 1
+
+		for _, e := range entries {
+			// Prepend subdirectory to match patterns
+			adjusted := e
+			if dir != "." && len(e.Match) > 0 {
+				newMatch := make([]string, len(e.Match))
+				for i, m := range e.Match {
+					newMatch[i] = filepath.Join(dir, m)
+				}
+				adjusted.Match = newMatch
+			}
+			allEntries = append(allEntries, configEntry{
+				entry:   adjusted,
+				relPath: relPath,
+				depth:   depth,
+			})
+		}
+	}
+
+	// Deduplicate by name, deeper wins
+	seen := map[string]configEntry{}
+	for _, ce := range allEntries {
+		existing, exists := seen[ce.entry.Name]
+		if !exists || ce.depth > existing.depth {
+			seen[ce.entry.Name] = ce
+		}
+	}
+
+	// Convert back to slice
+	entries := make([]manifest.Entry, 0, len(seen))
+	for _, ce := range seen {
+		entries = append(entries, ce.entry)
+	}
+
+	// Print summary
+	fmt.Printf("[hookset] Merged into %d hook(s)\n", len(entries))
+	for _, e := range entries {
+		fmt.Printf("  - %s (%s)\n", e.Name, e.Event)
+	}
+
+	return entries, nil
 }
 
 // buildWrapperCommand constructs the self-checking hook command stored in git config.
