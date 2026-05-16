@@ -1,10 +1,16 @@
 [[hooks]]
-  name = "go-fmt"
-  event = "pre-commit"
-  match = ["*.go"]
-  command = "go fmt"
+name = "go-fmt"
+event = "pre-commit"
+match = ["*.go"]
+command = "go fmt"
 
 [[hooks]]
-  name = "go-test"
-  event = "pre-push"
-  command = "go test ./..."
+name = "go-test"
+event = "pre-push"
+command = "go test ./..."
+
+[[hooks]]
+name = "golangci-lint"
+event = "pre-commit"
+match = ["*.go"]
+command = "golangci-lint run --fix"
