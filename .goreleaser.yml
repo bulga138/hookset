@@ -29,12 +29,12 @@ archives:
   - id: hookset
     builds: [hookset]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
     format_overrides:
       - goos: windows
         format: zip
     files:
       - README.md
-      - LICENSE
 
 checksum:
   name_template: "checksums.txt"
@@ -55,15 +55,21 @@ changelog:
       - "^test:"
       - "^chore:"
 
-brews:
+homebrew_casks:
   - name: hookset
+    binaries:
+      - hookset
+    ids:
+      - hookset
     repository:
       owner: bulga138
       name: homebrew-hookset
     homepage: "https://bulga138.github.io/hookset"
     description: "Git 2.54 config-native hook manager — no Husky, no lint-staged"
-    license: "MIT"
-    install: |
-      bin.install "hookset"
-    test: |
-      system "#{bin}/hookset", "version"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/hookset"]
+          end
+    skip_upload: auto
