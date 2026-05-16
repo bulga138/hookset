@@ -27,12 +27,12 @@ builds:
 
 archives:
   - id: hookset
-    builds: [hookset]
+    ids: [hookset]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.gz
+    formats: [tar.gz]
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
     files:
       - README.md
 
@@ -64,6 +64,7 @@ homebrew_casks:
     repository:
       owner: bulga138
       name: homebrew-hookset
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: "https://bulga138.github.io/hookset"
     description: "Git 2.54 config-native hook manager — no Husky, no lint-staged"
     hooks:
