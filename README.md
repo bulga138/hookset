@@ -4,8 +4,6 @@
 
 `hookset` uses Git 2.54's native `[hook]` configuration sections to define and run hooks. It includes its own staged-file filtering and stash/unstash engine, replacing `lint-staged`, `husky`, and `lefthook` with a single, globally-installed binary.
 
-> **Status: Alpha.** Core functionality works; test coverage and edge-case hardening in progress. See [ROADMAP.md](ROADMAP.md) for the full plan.
-
 ## Why hookset?
 
 | Tool        | What it leaves in your repo           |
@@ -21,7 +19,7 @@ No per-language tooling pollution. No runtime dependencies. One binary, installe
 
 ```bash
 # Install once per machine
-brew install hookset
+brew install bulga138/homebrew-hookset/hookset
 
 # In any repo with a .hookset.toml
 git clone <repo>
@@ -31,7 +29,6 @@ hookset init        # reads .hookset.toml, writes [hook] sections to .git/config
 # Now commit — hooks run automatically
 git commit -m "fix: something"
 ```
-
 
 ## Configuration
 
@@ -72,16 +69,26 @@ The stash/pop cycle ensures your working tree is never polluted, even if the lin
 
 ## Commands
 
-| Command                              | Description                                           |
-| ------------------------------------ | ----------------------------------------------------- |
-| `hookset init`                       | Read `.hookset.toml` and write hooks to `.git/config` |
-| `hookset add <name> -- <cmd>`        | Add a hook (personal: `--local`, team: `--manifest`)  |
-| `hookset remove <name>`              | Remove a hook from config                             |
-| `hookset list [event]`               | List configured hooks (wraps `git hook list`)         |
-| `hookset disable <name>`             | Disable a hook without removing it                    |
-| `hookset enable <name>`              | Re-enable a previously disabled hook                  |
-| `hookset exec --match ... -- <cmd>`  | Staging engine (called by Git, rarely used directly)  |
-| `hookset migrate --from <tool>`      | Convert from husky, lefthook, or lint-staged          |
+| Command                             | Description                                                            |
+| ----------------------------------- | ---------------------------------------------------------------------- |
+| `hookset init`                      | Read `.hookset.toml` and write hooks to `.git/config`                  |
+| `hookset init --recursive`          | Discover .hookset.toml in subdirectories and merge                     |
+| `hookset init --template <lang>`    | Generate config from template (typescript, python, go, rust, monorepo) |
+| `hookset add <name> -- <cmd>`       | Add a hook (personal: `--local`, team: `--manifest`)                   |
+| `hookset remove <name>`             | Remove a hook from config                                              |
+| `hookset disable <name>`            | Temporarily disable a hook without removing it                         |
+| `hookset enable <name>`             | Re-enable a previously disabled hook                                   |
+| `hookset list`                      | List configured hooks (wraps `git hook list`)                          |
+| `hookset exec --match ... -- <cmd>` | Staging engine (called by Git, rarely used directly)                   |
+| `hookset exec --summary`            | Print summary table after hook runs                                    |
+| `hookset migrate --from <tool>`     | Convert from husky, lefthook, or lint-staged                           |
+| `hookset check`                     | Validate .hookset.toml syntax and check commands                       |
+| `hookset update`                    | Self-update hookset binary from GitHub Releases                        |
+| `hookset version`                   | Print version, commit, and build timestamp                             |
+
+### Environment Variables
+
+- `HOOKSET_SKIP` - Comma-separated hook names to skip (e.g., `HOOKSET_SKIP=eslint,prettier`)
 
 ## Requirements
 
@@ -142,23 +149,6 @@ hookset/
 - **Linked worktrees:** Not supported. `hookset exec` will detect and refuse to run in a linked worktree.
 - **Large files (>10 MB):** A warning is emitted; pass `--allow-large` to suppress.
 
-## Roadmap
-
-See **[ROADMAP.md](ROADMAP.md)** for the complete plan, risk register, and timeline.
-
-| Phase | What                                        | Status                                   |
-| ----- | ------------------------------------------- | ---------------------------------------- |
-| 0     | Research, design, staging engine spike      | Complete                                 |
-| 1     | Infra, skeleton, `hookset version`          | Complete                                 |
-| 2     | Git config + `.hookset.toml` operations     | Complete                                 |
-| 3     | CLI: `add`, `remove`, `init`, etc.          | Complete                                 |
-| 4     | Staging engine: `hookset exec`              | Complete                                 |
-| 5     | Migration from husky, lefthook, lint-staged | Complete (with auto-detect for file-filtering hooks) |
-| 6     | Distribution: installers, CI action         | Complete                                 |
-| 7     | Testing & CI matrix                         | Complete (comprehensive unit tests)      |
-| 8     | Docs, website, completions                  | In progress                              |
-
 ## License
 
 MIT
-````
