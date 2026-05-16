@@ -1,5 +1,5 @@
 # hookset installer for Windows
-# Usage: irm https://raw.githubusercontent.com/bulga138/hookset/master/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/bulga138/hookset/master/scripts/install.ps1 | iex
 #
 # Environment overrides:
 #   $env:HOOKSET_VERSION      — install a specific version (default: latest)

@@ -9,13 +9,13 @@ brew install bulga138/homebrew-hookset/hookset
 ## Linux / WSL
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bulga138/hookset/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/bulga138/hookset/master/scripts/install.sh | sh
 ```
 
 ## Windows
 
 ```powershell
-irm https://raw.githubusercontent.com/bulga138/hookset/master/install.ps1 | iex
+irm https://raw.githubusercontent.com/bulga138/hookset/master/scripts/install.ps1 | iex
 ```
 
 ## Requirements

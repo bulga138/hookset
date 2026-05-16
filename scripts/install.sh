@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# hookset installer — curl -fsSL https://raw.githubusercontent.com/bulga138/hookset/master/install.sh | sh
+# hookset installer — curl -fsSL https://raw.githubusercontent.com/bulga138/hookset/master/scripts/install.sh | sh
 #
 # Detects OS/arch, downloads the latest release binary from GitHub Releases,
 # installs to ~/.local/bin (or $HOOKSET_INSTALL_DIR), and adds to PATH.

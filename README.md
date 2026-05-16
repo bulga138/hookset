@@ -102,13 +102,13 @@ The stash/pop cycle ensures your working tree is never polluted, even if the lin
 brew install bulga138/homebrew-hookset/hookset
 
 # Linux / WSL
-curl -fsSL https://raw.githubusercontent.com/bulga138/hookset/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/bulga138/hookset/master/scripts/install.sh | sh
 
 # Windows
-irm https://raw.githubusercontent.com/bulga138/hookset/master/install.ps1 | iex
+irm https://raw.githubusercontent.com/bulga138/hookset/master/scripts/install.ps1 | iex
 
 # Air-gapped environments
-HOOKSET_BINARY_PATH=/path/to/hookset curl -fsSL https://raw.githubusercontent.com/bulga138/hookset/master/install.sh | sh
+HOOKSET_BINARY_PATH=/path/to/hookset curl -fsSL https://raw.githubusercontent.com/bulga138/hookset/master/scripts/install.sh | sh
 ```
 
 ## Development

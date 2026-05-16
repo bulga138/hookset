@@ -21,7 +21,7 @@ For best compatibility, use Git Bash or WSL instead of cmd/PowerShell.
 PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/bulga138/hookset/master/install.ps1 | iex
+irm https://raw.githubusercontent.com/bulga138/hookset/master/scripts/install.ps1 | iex
 ```
 
 Or download manually from GitHub releases.
