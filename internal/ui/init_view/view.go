@@ -71,7 +71,7 @@ func (m Model) View() string {
 			cursor, checked, label, matches)
 
 		if m.IsBootstrap {
-			label += shared_theme.DimStyle.Render(" (suggested)")
+			_ = label + shared_theme.DimStyle.Render(" (suggested)") // unused but documents intent
 		}
 	}
 

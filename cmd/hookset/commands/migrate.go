@@ -73,7 +73,10 @@ Examples:
 		if !migrateYes {
 			fmt.Print("Write to .hookset.toml and run hookset init? [y/N] ")
 			var answer string
-			fmt.Scanln(&answer)
+			if _, err := fmt.Scanln(&answer); err != nil {
+				// EOF or error - treat as no answer
+				answer = ""
+			}
 			if strings.ToLower(strings.TrimSpace(answer)) != "y" {
 				fmt.Println("[hookset] Aborted.")
 				return nil

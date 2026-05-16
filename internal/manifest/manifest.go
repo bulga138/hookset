@@ -93,7 +93,7 @@ func Write(path string, entries []Entry) error {
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", path, err)
 	}
-	defer fh.Close()
+	defer func() { _ = fh.Close() }()
 	enc := toml.NewEncoder(fh)
 	enc.Indent = "  "
 	return enc.Encode(f)

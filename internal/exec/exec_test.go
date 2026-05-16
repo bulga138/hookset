@@ -201,7 +201,7 @@ func TestRunChunked(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// We can't easily test the actual subprocess calls in unit tests,
 			// but we can verify the function doesn't panic and handles edge cases.
-			if tc.files == nil || len(tc.files) == 0 {
+			if len(tc.files) == 0 {
 				// Should not crash on empty — runChunked would also handle this.
 				return
 			}
@@ -225,19 +225,6 @@ func makeLongFilenames(count, nameLen int) []string {
 	}
 	return files
 }
-
-type countingLogger struct {
-	verbose bool
-	chunks  int
-}
-
-func (l *countingLogger) step(format string, args ...any) {
-	if l.verbose {
-		l.chunks++
-	}
-}
-
-func (l *countingLogger) info(format string, args ...any) {}
 
 // TestRunCommand_singleCall verifies that runOnce handles basic execution.
 func TestRunCommand_singleCall(t *testing.T) {

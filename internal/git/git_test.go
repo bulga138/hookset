@@ -136,18 +136,6 @@ func TestResult(t *testing.T) {
 	}
 }
 
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	var digits []byte
-	for i > 0 {
-		digits = append([]byte{byte('0' + i%10)}, digits...)
-		i /= 10
-	}
-	return string(digits)
-}
-
 // TestScope_constants verifies scope constants are correct.
 func TestScope_constants(t *testing.T) {
 	if ScopeLocal != "--local" {
