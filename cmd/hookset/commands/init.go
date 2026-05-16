@@ -193,6 +193,47 @@ them into a single hook configuration.`,
 				if err != nil {
 					return fmt.Errorf("reading manifest: %w", err)
 				}
+
+				// Offer to add more hooks if file exists
+				if !initNoInteractive && !initInteractive && isatty.IsTerminal(os.Stdout.Fd()) {
+					fmt.Printf("[hookset] %s already exists with %d hook(s).\n", manifest.Filename, len(entries))
+					fmt.Println("Choose action:")
+					fmt.Println("  1) Edit existing hooks")
+					fmt.Println("  2) Add more hooks from templates")
+					fmt.Print("Enter choice (1/2): ")
+
+					var choice string
+					if _, err := fmt.Scanln(&choice); err != nil {
+						choice = "1"
+					}
+					choice = strings.TrimSpace(choice)
+
+					if choice == "2" {
+						// Run template picker to add more hooks
+						newEntries, err := init_view.RunTemplatePicker()
+						if err != nil {
+							return fmt.Errorf("template picker failed: %w", err)
+						}
+						if len(newEntries) > 0 {
+							// Merge with existing entries (avoid duplicates by name)
+							existingNames := map[string]bool{}
+							for _, e := range entries {
+								existingNames[e.Name] = true
+							}
+							for _, e := range newEntries {
+								if !existingNames[e.Name] {
+									entries = append(entries, e)
+									existingNames[e.Name] = true
+								}
+							}
+							// Save merged entries
+							if err := manifest.Write(tomlPath, entries); err != nil {
+								return fmt.Errorf("writing manifest: %w", err)
+							}
+							fmt.Printf("[hookset] Added %d new hook(s) to %s\n", len(newEntries), manifest.Filename)
+						}
+					}
+				}
 			}
 		}
 
