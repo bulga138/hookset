@@ -675,15 +675,24 @@ func buildWrapperCommand(entry manifest.Entry, direct bool) string {
 	return buildPresenceCheck(installMsg, inner)
 }
 
+// dqEscape escapes a string for safe embedding in a double-quoted POSIX shell string.
+// Inside "..." only ", \, $, and ` are special and must be escaped.
+func dqEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `$`, `\$`)
+	s = strings.ReplaceAll(s, "`", "\\`")
+	return s
+}
+
 // buildPresenceCheck wraps execCmd in a sh -c that aborts with installMsg
 // if hookset is not found on PATH.
 func buildPresenceCheck(installMsg, execCmd string) string {
-	// Single-quote the install message for safe embedding in the sh -c '...' body.
-	// Any apostrophes in the message are escaped via the standard POSIX idiom.
-	safeMsg := strings.ReplaceAll(installMsg, "'", "'\\''")
+	safeMsg := dqEscape(installMsg)
+	safeCmd := dqEscape(execCmd)
 	return fmt.Sprintf(
-		`sh -c 'command -v hookset >/dev/null 2>&1 || { printf "%%s\n" '%s' >&2; exit 1; }; exec %s'`,
-		safeMsg, execCmd,
+		`sh -c "command -v hookset >/dev/null 2>&1 || { printf \"%%s\n\" \"%s\" >&2; exit 1; }; exec %s"`,
+		safeMsg, safeCmd,
 	)
 }
 
@@ -691,10 +700,11 @@ func buildPresenceCheck(installMsg, execCmd string) string {
 // positional arguments ($1, $2, …) through to the inner hookset exec call via "$@".
 // The trailing " --" in the rendered string is the argv[0] placeholder for sh -c.
 func buildPresenceCheckPassthrough(installMsg, execCmd string) string {
-	safeMsg := strings.ReplaceAll(installMsg, "'", "'\\''")
+	safeMsg := dqEscape(installMsg)
+	safeCmd := dqEscape(execCmd)
 	return fmt.Sprintf(
-		`sh -c 'command -v hookset >/dev/null 2>&1 || { printf "%%s\n" '%s' >&2; exit 1; }; exec %s' --`,
-		safeMsg, execCmd,
+		`sh -c "command -v hookset >/dev/null 2>&1 || { printf \"%%s\n\" \"%s\" >&2; exit 1; }; exec %s" --`,
+		safeMsg, safeCmd,
 	)
 }
 
@@ -703,12 +713,6 @@ func shellQuote(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
-// templateEntriesByName is a thin bridge used by bootstrap.go so it can
-// resolve template entries without importing internal/templates directly.
-func templateEntriesByName(name string) ([]manifest.Entry, error) {
-	return templates.GenerateEntries([]string{name})
 }
 
 // versionKey is the git config key where we store the hookset version that installed the hooks.
@@ -773,7 +777,7 @@ func CheckAndUpdateHooks() {
 				// Re-install all hooks with new wrapper commands
 				for _, entry := range entries {
 					// Remove old hook
-					gitconfig.RemoveHook(entry.Name, git.ScopeLocal)
+					_ = gitconfig.RemoveHook(entry.Name, git.ScopeLocal)
 					// Add new hook with updated wrapper
 					h := gitconfig.Hook{
 						Name:    entry.Name,
@@ -782,7 +786,7 @@ func CheckAndUpdateHooks() {
 						Matches: entry.Match,
 						Enabled: true,
 					}
-					gitconfig.AddHook(h, git.ScopeLocal)
+					_ = gitconfig.AddHook(h, git.ScopeLocal)
 				}
 				// Update stored version
 				storeVersion()

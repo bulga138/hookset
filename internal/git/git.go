@@ -63,8 +63,8 @@ func RepoRoot() (string, error) {
 	// Provide a friendlier message with walk-up context.
 	cwd, _ := os.Getwd()
 	return "", fmt.Errorf(
-		"not inside a git repository (checked %s and up to %d parent directories)\n"+
-			"         Run 'git init' to create a new repository, or 'cd' into an existing one.",
+		"not inside a git repository (checked %s and up to %d parent directories); "+
+			"run 'git init' to create a new repository, or 'cd' into an existing one",
 		cwd, maxWalkLevels,
 	)
 }

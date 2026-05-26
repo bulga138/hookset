@@ -119,10 +119,10 @@ func FlushResults(results []Result, w io.Writer) int {
 	worst := 0
 	for _, r := range results {
 		if len(r.Output) > 0 {
-			fmt.Fprintf(w, "[hookset] %s:\n", r.Entry.Name)
+			_, _ = fmt.Fprintf(w, "[hookset] %s:\n", r.Entry.Name)
 			w.Write(r.Output) //nolint:errcheck
 			if !bytes.HasSuffix(r.Output, []byte("\n")) {
-				fmt.Fprintln(w)
+				_, _ = fmt.Fprintln(w)
 			}
 		}
 		if r.ExitCode != 0 && r.ExitCode > worst {
