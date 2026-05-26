@@ -13,4 +13,4 @@ command = "go test ./..."
 name = "golangci-lint"
 event = "pre-commit"
 match = ["*.go"]
-command = "golangci-lint run --fix"
+command = "golangci-lint run --fix --new-from-rev=HEAD"

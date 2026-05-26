@@ -162,6 +162,20 @@ func migrateHusky(repoRoot string) (*Result, error) {
 		return nil, fmt.Errorf("no .husky directory found at %s", repoRoot)
 	}
 
+	// Cache the lint-staged sub-migration so we don't re-read config from disk
+	// for every husky hook that delegates to lint-staged.
+	var lintStagedOnce *Result
+	var lintStagedErr error
+	lintStagedCached := false
+
+	cachedMigrateLintStaged := func() (*Result, error) {
+		if !lintStagedCached {
+			lintStagedOnce, lintStagedErr = migrateLintStaged(repoRoot)
+			lintStagedCached = true
+		}
+		return lintStagedOnce, lintStagedErr
+	}
+
 	res := &Result{}
 	for _, e := range entries {
 		if e.IsDir() || strings.HasPrefix(e.Name(), "_") {
@@ -184,7 +198,7 @@ func migrateHusky(repoRoot string) (*Result, error) {
 
 			// Detect lint-staged delegation — fall back to lint-staged migrator.
 			if isLintStagedCall(cmd) {
-				sub, err := migrateLintStaged(repoRoot)
+				sub, err := cachedMigrateLintStaged()
 				if err != nil {
 					res.warn(fmt.Sprintf(".husky/%s calls lint-staged but migration failed: %v", event, err))
 					continue

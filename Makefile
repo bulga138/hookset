@@ -36,7 +36,7 @@ build:
 	@echo "Building hookset..."
 	@echo "  Version: $(VERSION)"
 	@echo "  Commit:  $(COMMIT)"
-	@go build -ldflags "-X github.com/bulga138/hookset/version.Version=$(VERSION) -X github.com/bulga138/hookset/version.Commit=$(COMMIT) -X 'github.com/bulga138/hookset/version.BuildTime=$(BUILD_TIME)'" -o $(BINARY_NAME)$(EXE_EXT) $(MAIN_PKG)
+	@go build -ldflags "-X github.com/bulga138/hookset/internal/version.Version=$(VERSION) -X github.com/bulga138/hookset/internal/version.Commit=$(COMMIT) -X 'github.com/bulga138/hookset/internal/version.BuildTime=$(BUILD_TIME)'" -o $(BINARY_NAME)$(EXE_EXT) $(MAIN_PKG)
 	@echo "Build complete: $(BINARY_NAME)$(EXE_EXT)"
 
 # Build with debug info (development)
@@ -50,7 +50,7 @@ build-dev:
 .PHONY: release
 release:
 	@echo "Building release version..."
-	@go build -ldflags "-X github.com/bulga138/hookset/version.Version=$(TAG) -X github.com/bulga138/hookset/version.Commit=$(shell git rev-parse --short HEAD) -X 'github.com/bulga138/hookset/version.BuildTime=$(shell $(GET_DATE))'" -o $(BINARY_NAME)-$(TAG)$(EXE_EXT) $(MAIN_PKG)
+	@go build -ldflags "-X github.com/bulga138/hookset/internal/version.Version=$(TAG) -X github.com/bulga138/hookset/internal/version.Commit=$(shell git rev-parse --short HEAD) -X 'github.com/bulga138/hookset/internal/version.BuildTime=$(shell $(GET_DATE))'" -o $(BINARY_NAME)-$(TAG)$(EXE_EXT) $(MAIN_PKG)
 	@echo "Release build complete"
 
 # Run the editor
@@ -61,7 +61,7 @@ run:
 # Run with version info
 .PHONY: run-version
 run-version:
-	@go run -ldflags "-X github.com/bulga138/hookset/version.Version=$(VERSION) -X github.com/bulga138/hookset/version.Commit=$(COMMIT) -X 'github.com/bulga138/hookset/version.BuildTime=$(BUILD_TIME)'" $(MAIN_PKG) --version
+	@go run -ldflags "-X github.com/bulga138/hookset/internal/version.Version=$(VERSION) -X github.com/bulga138/hookset/internal/version.Commit=$(COMMIT) -X 'github.com/bulga138/hookset/internal/version.BuildTime=$(BUILD_TIME)'" $(MAIN_PKG) --version
 
 # Run with file
 .PHONY: run-file
@@ -73,6 +73,23 @@ run-file:
 test:
 	@echo "Running tests..."
 	@go test ./...
+
+# Generate per-archive SHA-256 files after goreleaser (run: make goreleaser-checksums)
+# This produces dist/hookset_<version>_<os>_<arch>.tar.gz.sha256 files consumed
+# by the install script for independent per-download verification.
+.PHONY: goreleaser-checksums
+goreleaser-checksums:
+	@echo "Generating per-archive SHA-256 files in dist/..."
+	@for f in dist/*.tar.gz dist/*.zip; do \
+	  [ -f "$$f" ] || continue; \
+	  if command -v sha256sum >/dev/null 2>&1; then \
+	    sha256sum "$$f" | awk '{print $$1}' > "$$f.sha256"; \
+	  else \
+	    shasum -a 256 "$$f" | awk '{print $$1}' > "$$f.sha256"; \
+	  fi; \
+	  echo "  wrote $$f.sha256"; \
+	done
+	@echo "Done."
 
 # Clean up
 .PHONY: clean

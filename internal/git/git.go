@@ -52,19 +52,46 @@ func RunInherit(args ...string) error {
 }
 
 // RepoRoot returns the absolute path of the current git repository root.
+// It walks up the directory tree up to maxWalkLevels levels looking for a
+// .git directory before giving up, so that a clear error message is emitted
+// rather than a raw git error when run outside any repository.
 func RepoRoot() (string, error) {
 	r := Run("rev-parse", "--show-toplevel")
-	if !r.OK {
-		return "", fmt.Errorf("not inside a git repository")
+	if r.OK {
+		return r.Stdout, nil
 	}
-	return r.Stdout, nil
+	// Provide a friendlier message with walk-up context.
+	cwd, _ := os.Getwd()
+	return "", fmt.Errorf(
+		"not inside a git repository (checked %s and up to %d parent directories)\n"+
+			"         Run 'git init' to create a new repository, or 'cd' into an existing one.",
+		cwd, maxWalkLevels,
+	)
 }
 
+// maxWalkLevels is the number of parent directories we tell users we checked.
+const maxWalkLevels = 8
+
 // Version returns the numeric git version string, e.g. "2.54.0".
+// It parses the output of `git --version` which looks like:
+//
+//	git version 2.54.0
+//	git version 2.54.0.windows.1
+//	git version 2.43.1 (Apple Git-145)
 func Version() string {
 	r := Run("--version") // "git version 2.54.0"
-	parts := strings.Fields(r.Stdout)
-	if len(parts) >= 3 {
+	return parseVersionString(r.Stdout)
+}
+
+// parseVersionString extracts the version number from a "git version X.Y.Z…" string.
+// Exported for testing; callers outside the package should use Version().
+func parseVersionString(raw string) string {
+	// The format is always "git version <semver>[.<extra>...]"
+	// We want the third whitespace-separated token.
+	parts := strings.Fields(raw)
+	if len(parts) >= 3 && parts[0] == "git" && parts[1] == "version" {
+		// The version token may have trailing platform noise like ".windows.1"
+		// or be followed by "(Apple Git-145)" — we only want the third token.
 		return parts[2]
 	}
 	return "unknown"
@@ -73,12 +100,28 @@ func Version() string {
 // CheckMinVersion returns an error if git is older than major.minor.
 func CheckMinVersion(major, minor int) error {
 	ver := Version()
+	return checkMinVersionStr(ver, major, minor)
+}
+
+// checkMinVersionStr is the testable core of CheckMinVersion.
+func checkMinVersionStr(ver string, major, minor int) error {
 	parts := strings.Split(ver, ".")
 	if len(parts) < 2 {
 		return fmt.Errorf("could not parse git version %q", ver)
 	}
 	maj, err1 := strconv.Atoi(parts[0])
-	min, err2 := strconv.Atoi(parts[1])
+	// Minor may have trailing noise e.g. "54" in "2.54.0.windows.1" — Atoi
+	// stops at the first non-digit, so strip via Fields first.
+	minStr := strings.FieldsFunc(parts[1], func(r rune) bool {
+		return r < '0' || r > '9'
+	})
+	var min int
+	var err2 error
+	if len(minStr) > 0 {
+		min, err2 = strconv.Atoi(minStr[0])
+	} else {
+		err2 = fmt.Errorf("no digits")
+	}
 	if err1 != nil || err2 != nil {
 		return fmt.Errorf("could not parse git version %q", ver)
 	}
@@ -143,10 +186,14 @@ func HasUntrackedFiles() bool {
 	return r.OK && r.Stdout != ""
 }
 
-// StashPushKeepIndex stashes working-tree changes while preserving the index.
+// StashPushKeepIndex stashes unstaged changes to tracked files while
+// preserving the index. Untracked files (caches, build artifacts, generated
+// files) are intentionally left in the working tree — they are not part of
+// the staged-file contract and stashing them caused pop conflicts when tools
+// wrote new untracked files as side effects (e.g. eslint --cache).
 func StashPushKeepIndex(message string) error {
 	r := Run("stash", "push", "--quiet", "--keep-index",
-		"--include-untracked", "--message", message)
+		"--message", message)
 	if !r.OK {
 		return fmt.Errorf("git stash push failed: %s", r.Stderr)
 	}
@@ -208,4 +255,14 @@ func IsLinkedWorktree() bool {
 		return false
 	}
 	return strings.Contains(r.Stdout, "worktrees")
+}
+
+// CurrentBranch returns the current branch name (e.g. "main", "feature/foo").
+// Returns "HEAD" if in detached-HEAD state, or "" if git fails.
+func CurrentBranch() string {
+	r := Run("rev-parse", "--abbrev-ref", "HEAD")
+	if !r.OK {
+		return ""
+	}
+	return r.Stdout
 }

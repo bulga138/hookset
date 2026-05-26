@@ -23,7 +23,12 @@ type Options struct {
 	// Patterns are the --match pathspecs (Git-native globs).
 	Patterns []string
 	// Command is the tool to run, e.g. ["npx", "eslint", "--cache", "--fix"].
+	// When the command string (joined) contains a {token}, matched files are
+	// NOT appended as trailing arguments — the token handles placement.
 	Command []string
+	// Event is the git hook event name (e.g. "pre-commit"). Used for {event}
+	// token expansion and for bypassing the empty-files check on passthrough hooks.
+	Event string
 	// Verbose enables step-by-step output.
 	Verbose bool
 	// AllowLarge skips the >10 MB file warning.
@@ -32,6 +37,12 @@ type Options struct {
 	NoStash bool
 	// Summary enables summary table output after hook runs.
 	Summary bool
+	// Cwd sets the working directory for the command, relative to the repo root.
+	// If empty, the command runs in the current directory (repo root).
+	Cwd string
+	// FailText is a human-readable message emitted on non-zero exit.
+	// Supports {event}, {branch}, {staged_files} tokens.
+	FailText string
 }
 
 const largeBytesThreshold = 10 * 1024 * 1024 // 10 MB
@@ -47,11 +58,6 @@ func Run(opts Options) int {
 
 	staged := git.StagedFiles()
 	log.step("Staged files (%d): %v", len(staged), staged)
-
-	if len(staged) == 0 {
-		log.info("No staged files — skipping")
-		return 0
-	}
 
 	// ── 2. Guard: linked worktrees are not supported in v1 ───────────────────
 
@@ -71,14 +77,63 @@ func Run(opts Options) int {
 	log.step("Matched files (%d): %v", len(matched), matched)
 	log.step("Excluded files (%d): %v", len(staged)-len(matched), exclude(staged, matched))
 
-	if len(matched) == 0 {
-		log.info("No files match patterns %v — skipping", opts.Patterns)
-		return 0
+	// ── 4. Token expansion ────────────────────────────────────────────────────
+	//
+	// Expand {staged_files}, {staged_files_or_default}, {event}, {branch} in
+	// the command string. Must happen BEFORE the empty-files early-return so
+	// that {staged_files_or_default} gets a chance to expand to "." and the
+	// command still runs even when no files matched.
+	//
+	// When any token is found, files are embedded via the token — do NOT also
+	// append them as trailing arguments.
+
+	branch := git.CurrentBranch()
+	rawCmd := strings.Join(opts.Command, " ")
+	expandedCmd, hadToken := expandTokens(rawCmd, matched, opts.Event, branch)
+
+	// Rebuild command slice from the expanded string for the shell.
+	// The user's command is already wrapped in sh -c by buildWrapperCommand so
+	// we only need to pass it as a single string token here.
+	finalCommand := opts.Command
+	appendFiles := !hadToken // append matched files as args unless tokens did it
+	if hadToken {
+		// Replace the command slice with [sh, -c, expandedCmd].
+		finalCommand = []string{"sh", "-c", expandedCmd}
+		appendFiles = false
 	}
 
-	// ── 4. Warn on large files ────────────────────────────────────────────────
+	// ── 5. Empty-files early-return (AFTER token expansion, A9) ──────────────
+	//
+	// Skip when:
+	//   a) no files matched AND the command has no {staged_files_or_default} token
+	//      (that token already handles the empty-files case with "." fallback), OR
+	//   b) no files staged at all (nothing to do regardless).
+	//
+	// Passthrough hooks (Event set to an arg-style event) bypass this check
+	// entirely — they don't operate on staged files.
 
-	if !opts.AllowLarge {
+	isPassthrough := passthroughEvent(opts.Event)
+
+	if !isPassthrough {
+		if len(staged) == 0 {
+			log.info("No staged files — skipping")
+			return 0
+		}
+		if len(matched) == 0 && !hadToken {
+			log.info("No files match patterns %v — skipping", opts.Patterns)
+			return 0
+		}
+		// If token expansion happened but produced an empty {staged_files}
+		// (and the command does not use {staged_files_or_default}), skip.
+		if hadToken && len(matched) == 0 && !strings.Contains(rawCmd, "{staged_files_or_default}") {
+			log.info("No files match patterns — skipping (token produced empty list)")
+			return 0
+		}
+	}
+
+	// ── 6. Warn on large files ────────────────────────────────────────────────
+
+	if !opts.AllowLarge && len(matched) > 0 {
 		if name, size := firstLargeFile(matched); name != "" {
 			fmt.Fprintf(os.Stderr,
 				"[hookset] warning: %s is %.1f MB — stashing large files may be slow.\n"+
@@ -87,10 +142,10 @@ func Run(opts Options) int {
 		}
 	}
 
-	// ── 5. Stash unstaged changes ─────────────────────────────────────────────
+	// ── 7. Stash unstaged changes ─────────────────────────────────────────────
 
 	stashCreated := false
-	if !opts.NoStash && (git.HasUnstagedChanges() || git.HasUntrackedFiles()) {
+	if !opts.NoStash && !isPassthrough && git.HasUnstagedChanges() {
 		msg := fmt.Sprintf("hookset auto-stash %d", time.Now().UnixMilli())
 		log.step("Stashing unstaged changes: %s", msg)
 		if err := git.StashPushKeepIndex(msg); err != nil {
@@ -108,51 +163,87 @@ func Run(opts Options) int {
 			log.step("Popping stash")
 			if err := git.StashPop(); err != nil {
 				fmt.Fprintf(os.Stderr, "[hookset] warning: stash pop failed: %v\n", err)
-				fmt.Fprintln(os.Stderr, "         Run `git stash pop` manually to restore your working tree.")
+				fmt.Fprintln(os.Stderr, "         Your changes are safe in `git stash list` (most recent entry).")
+				fmt.Fprintln(os.Stderr, "         Recover with: git stash pop")
 			}
+		}
+		if opts.Summary {
+			printSummary(opts.Command, matched, exitCode == 0)
 		}
 	}()
 
-	// ── 6. Run the tool ───────────────────────────────────────────────────────
+	// ── 8. Run the tool ───────────────────────────────────────────────────────
 
-	log.step("Running: %s %s", strings.Join(opts.Command, " "), strings.Join(matched, " "))
+	// Apply cwd if set — change directory before running the command.
+	if opts.Cwd != "" {
+		if err := os.Chdir(opts.Cwd); err != nil {
+			fmt.Fprintf(os.Stderr, "[hookset] error: cannot chdir to %q: %v\n", opts.Cwd, err)
+			exitCode = 1
+			return exitCode
+		}
+	}
 
-	code := runCommand(opts.Command, matched, log)
+	var filesForLog []string
+	if appendFiles {
+		filesForLog = matched
+	}
+	log.step("Running: %s %s", strings.Join(finalCommand, " "), strings.Join(filesForLog, " "))
+
+	var code int
+	if appendFiles {
+		code = runCommand(finalCommand, matched, log)
+	} else {
+		code = runCommand(finalCommand, nil, log)
+	}
 	if code != 0 {
 		exitCode = code
-		fmt.Fprintf(os.Stderr, "[hookset] %s exited with code %d — commit aborted\n",
-			opts.Command[0], code)
+		if opts.FailText != "" {
+			// Expand tokens in fail_text so messages can be context-aware.
+			msg, _ := expandTokens(opts.FailText, matched, opts.Event, branch)
+			fmt.Fprintf(os.Stderr, "[hookset] %s\n", msg)
+		} else {
+			fmt.Fprintf(os.Stderr, "[hookset] %s exited with code %d — commit aborted\n",
+				opts.Command[0], code)
+		}
 		return exitCode
 	}
 
-	// ── 7. Re-stage modified or deleted files ─────────────────────────────────
+	// ── 9. Re-stage modified or deleted files ─────────────────────────────────
 
-	toAdd, toRemove := classifyAfterRun(matched)
-	log.step("Re-staging %d file(s), removing %d file(s)", len(toAdd), len(toRemove))
-	if len(toAdd) > 0 {
-		log.step("[WARN] Re-staging entire file(s): %v", toAdd)
-		log.step("   Partial staging note: all changes in these files will be included")
-	}
+	if !isPassthrough && len(matched) > 0 {
+		toAdd, toRemove := classifyAfterRun(matched)
+		log.step("Re-staging %d file(s), removing %d file(s)", len(toAdd), len(toRemove))
+		if len(toAdd) > 0 {
+			log.step("[WARN] Re-staging entire file(s): %v", toAdd)
+			log.step("   Partial staging note: all changes in these files will be included")
+		}
 
-	if err := git.Add(toAdd); err != nil {
-		fmt.Fprintf(os.Stderr, "[hookset] error re-staging files: %v\n", err)
-		exitCode = 1
-		return exitCode
-	}
-	if err := git.RmCached(toRemove); err != nil {
-		fmt.Fprintf(os.Stderr, "[hookset] error removing deleted files from index: %v\n", err)
-		exitCode = 1
-		return exitCode
+		if err := git.Add(toAdd); err != nil {
+			fmt.Fprintf(os.Stderr, "[hookset] error re-staging files: %v\n", err)
+			exitCode = 1
+			return exitCode
+		}
+		if err := git.RmCached(toRemove); err != nil {
+			fmt.Fprintf(os.Stderr, "[hookset] error removing deleted files from index: %v\n", err)
+			exitCode = 1
+			return exitCode
+		}
 	}
 
 	log.info("Done ✓")
 
-	// Print summary if requested
-	if opts.Summary {
-		printSummary(opts.Command, matched, exitCode == 0)
-	}
-
 	return 0
+}
+
+// passthroughEvent returns true for git hook events that receive positional
+// args from git rather than operating on staged files.
+func passthroughEvent(event string) bool {
+	switch event {
+	case "commit-msg", "prepare-commit-msg", "pre-rebase",
+		"post-checkout", "post-merge", "post-rewrite", "applypatch-msg":
+		return true
+	}
+	return false
 }
 
 // printSummary prints a compact table of hook execution results.

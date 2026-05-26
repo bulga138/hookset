@@ -15,7 +15,7 @@ hookset exec [flags] -- <command>
 It:
 1. Collects staged files (`git diff --cached`)
 2. Filters by `--match` patterns (git ls-files)
-3. Stashes unstaged changes (`--keep-index`)
+3. Stashes unstaged changes to **tracked files** (`--keep-index`). Untracked files (caches, build artifacts, generated files) are left in the working tree during the run and are not modified by hookset.
 4. Runs the command with matched files as arguments
 5. Re-stages any files modified by the command
 6. Pops the stash

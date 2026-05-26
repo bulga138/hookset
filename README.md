@@ -1,8 +1,8 @@
 # hookset
 
-**Git-native hook manager — no Husky, no lint-staged, no committed scripts.**
+**Powered by native git 2.54 hooks — one global install, zero per-project dependencies.**
 
-`hookset` uses Git 2.54's native `[hook]` configuration sections to define and run hooks. It includes its own staged-file filtering and stash/unstash engine, replacing `lint-staged`, `husky`, and `lefthook` with a single, globally-installed binary.
+`hookset` uses git 2.54's native `[hook "<name>"]` config syntax to define, install, and run git hooks. It replaces `husky`, `lefthook`, and `lint-staged` with a single binary installed once per developer machine. Projects ship only `.hookset.toml` — no `npm install`, no `prepare` script, no `core.hooksPath` workaround.
 
 ## Why hookset?
 
@@ -65,7 +65,7 @@ When Git runs a hook, it calls `hookset exec`, which:
 6. Pops the stash
 7. Propagates the command's exit code
 
-The stash/pop cycle ensures your working tree is never polluted, even if the linter fails.
+The stash/pop cycle ensures your tracked files are never polluted, even if the linter fails. Untracked artifacts (caches, build outputs) created by the tool are left in place — the same as running the tool by hand.
 
 ## Commands
 

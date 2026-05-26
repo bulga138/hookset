@@ -6,14 +6,32 @@ Add a hook to git config or `.hookset.toml`.
 
 ```
 hookset add <name> [flags] -- <command>
+hookset add <name> <event> "<command>"
 ```
 
 ## Description
 
-Add a named hook entry.
+Two forms are accepted:
 
-- **Without `--manifest`**: writes directly to `.git/config` (personal, uncommitted)
-- **With `--manifest`**: appends to `.hookset.toml` only; run `hookset init` to apply
+**Flag form** -- full control over all options:
+```bash
+hookset add <name> --on <event> [--match <pattern>] [--manifest] [--global] -- <command>
+```
+
+**Sugar form** -- quick one-liner for the common case:
+```bash
+hookset add <name> <event> "<command>"
+```
+
+The sugar form writes to `.hookset.toml` (`--manifest` is implied) and
+automatically sets `passthrough = true` for arg-style events (`commit-msg`,
+`prepare-commit-msg`, `pre-rebase`, `post-checkout`, `post-merge`,
+`post-rewrite`, `applypatch-msg`).
+
+Storage options:
+
+- **Without `--manifest`** (flag form only): writes directly to `.git/config` (personal, uncommitted)
+- **With `--manifest`** or sugar form: appends to `.hookset.toml`; run `hookset init` to apply
 - **With `--global`**: writes to `~/.gitconfig` (applies to all repos on this machine)
 
 ## Flags
@@ -28,13 +46,22 @@ Add a named hook entry.
 ## Examples
 
 ```bash
-# Personal hook (uncommitted)
+# Sugar form -- fast one-liner, writes to .hookset.toml
+hookset add typecheck pre-push "tsc --noEmit"
+hookset add commitlint commit-msg "npx commitlint --edit"
+
+# Flag form -- personal hook (uncommitted, git config only)
 hookset add typecheck --on pre-push -- tsc --noEmit
 
-# Team hook (add to manifest)
+# Flag form -- team hook (add to manifest)
 hookset add eslint --match "*.ts" --match "*.js" --manifest -- npx eslint --cache --fix
 hookset init
 
-# Global hook (this machine only)
+# Flag form -- global hook (this machine only)
 hookset add secrets --global --on pre-commit -- detect-secrets scan
 ```
+
+## See also
+
+- [`hookset list`](list.md) -- list all configured hooks
+- [`hookset init`](init.md) -- apply manifest changes to git config

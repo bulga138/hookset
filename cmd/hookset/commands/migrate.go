@@ -3,8 +3,10 @@ package commands
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/bulga138/hookset/internal/cleanup"
 	"github.com/bulga138/hookset/internal/git"
 	"github.com/bulga138/hookset/internal/manifest"
 	"github.com/bulga138/hookset/internal/migrate"
@@ -12,9 +14,10 @@ import (
 )
 
 var (
-	migrateFrom   string
-	migrateDryRun bool
-	migrateYes    bool
+	migrateFrom         string
+	migrateDryRun       bool
+	migrateYes          bool
+	migrateResetHooksPath bool
 )
 
 var migrateCmd = &cobra.Command{
@@ -26,8 +29,12 @@ or lefthook) and produces equivalent .hookset.toml entries.
 Examples:
   hookset migrate --from lint-staged --dry-run
   hookset migrate --from husky --yes
-  hookset migrate --from lefthook --yes`,
+  hookset migrate --from lefthook --yes
+  hookset migrate --from husky --yes --reset-hooks-path`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := requireGit254(); err != nil {
+			return err
+		}
 		if migrateFrom == "" {
 			return fmt.Errorf("--from is required (lint-staged, husky, or lefthook)")
 		}
@@ -74,12 +81,43 @@ Examples:
 			fmt.Print("Write to .hookset.toml and run hookset init? [y/N] ")
 			var answer string
 			if _, err := fmt.Scanln(&answer); err != nil {
-				// EOF or error - treat as no answer
 				answer = ""
 			}
 			if strings.ToLower(strings.TrimSpace(answer)) != "y" {
 				fmt.Println("[hookset] Aborted.")
 				return nil
+			}
+		}
+
+		// D6: detect core.hooksPath and warn (or unset if --reset-hooks-path).
+		hooksPathResult := git.Run("config", "--local", "core.hooksPath")
+		if hooksPathResult.OK && hooksPathResult.Stdout != "" {
+			if migrateResetHooksPath {
+				r := git.Run("config", "--local", "--unset", "core.hooksPath")
+				if !r.OK {
+					return fmt.Errorf("failed to unset core.hooksPath: %s", r.Stderr)
+				}
+				fmt.Println("[hookset] Unset core.hooksPath (--reset-hooks-path)")
+			} else {
+				fmt.Fprintf(os.Stderr,
+					"[hookset] warning: core.hooksPath = %q is set.\n"+
+						"          This overrides git config hooks used by hookset.\n"+
+						"          Re-run with --reset-hooks-path to unset it automatically,\n"+
+						"          or run: git config --local --unset core.hooksPath\n",
+					hooksPathResult.Stdout)
+			}
+		}
+
+		// D7: back up any existing .git/hooks/* executables before init overwrites them.
+		hooksDir := filepath.Join(root, ".git", "hooks")
+		backed, err := cleanup.BackupExistingHooks(hooksDir)
+		if err != nil {
+			// Non-fatal: warn and continue.
+			fmt.Fprintf(os.Stderr, "[hookset] warning: could not back up existing hooks: %v\n", err)
+		} else if len(backed) > 0 {
+			fmt.Printf("[hookset] Backed up %d existing hook file(s) to .git/hooks/_backup/\n", len(backed))
+			for _, b := range backed {
+				fmt.Printf("          %s → %s\n", b.Event, b.BackupPath)
 			}
 		}
 
@@ -105,6 +143,8 @@ func init() {
 		"Print what would be migrated without writing any files")
 	migrateCmd.Flags().BoolVar(&migrateYes, "yes", false,
 		"Write .hookset.toml and run hookset init without prompting")
+	migrateCmd.Flags().BoolVar(&migrateResetHooksPath, "reset-hooks-path", false,
+		"Unset core.hooksPath if it is set (required for git config hooks to work)")
 	rootCmd.AddCommand(migrateCmd)
 }
 

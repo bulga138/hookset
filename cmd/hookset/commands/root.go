@@ -3,8 +3,8 @@ package commands
 import (
 	"fmt"
 	"os"
-	"runtime/debug"
 
+	"github.com/bulga138/hookset/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +20,7 @@ Hooks are defined in .hookset.toml and installed into git config with:
 
   hookset init
 
-See https://hookset.dev for documentation.`,
+See https://bulga138.github.io/hookset/ for documentation.`,
 	SilenceUsage: true,
 }
 
@@ -45,10 +45,16 @@ func Execute() {
 }
 
 func buildVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok {
-		if v := info.Main.Version; v != "" && v != "(devel)" {
-			return v
-		}
+	v := version.Version
+	if v == "dev" || v == "" {
+		return "dev"
 	}
-	return "dev"
+	s := v
+	if version.Commit != "none" && version.Commit != "" {
+		s += " (" + version.Commit + ")"
+	}
+	if version.BuildTime != "unknown" && version.BuildTime != "" {
+		s += " built " + version.BuildTime
+	}
+	return s
 }

@@ -21,9 +21,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
+      - -X github.com/bulga138/hookset/internal/version.Version={{.Version}}
+      - -X github.com/bulga138/hookset/internal/version.Commit={{.Commit}}
+      - -X github.com/bulga138/hookset/internal/version.BuildTime={{.Date}}
 
 archives:
   - id: hookset
@@ -38,6 +38,15 @@ archives:
 
 checksum:
   name_template: "checksums.txt"
+  # Also publish individual per-archive .sha256 files so the install script
+  # can verify each download independently without parsing checksums.txt.
+  extra_files:
+    - glob: "dist/*.sha256"
+
+# Per-archive SHA-256 files — generated in the before hook (see Makefile target
+# `make release-checksums`) or by goreleaser's own checksums mechanism.
+# The install script downloads hookset_<version>_<os>_<arch>.tar.gz.sha256
+# alongside the archive and verifies before extracting.
 
 release:
   github:

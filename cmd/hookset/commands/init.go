@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/bulga138/hookset/internal/git"
 	"github.com/bulga138/hookset/internal/gitconfig"
 	"github.com/bulga138/hookset/internal/manifest"
+	"github.com/bulga138/hookset/internal/orchestrator"
 	"github.com/bulga138/hookset/internal/scanner"
 	"github.com/bulga138/hookset/internal/templates"
 	"github.com/bulga138/hookset/internal/ui/init_view"
@@ -44,6 +44,11 @@ hook entry (idempotent).
 Use --recursive to discover .hookset.toml files in subdirectories and merge
 them into a single hook configuration.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Enforce git ≥ 2.54 floor for all init operations.
+		if err := requireGit254(); err != nil {
+			return err
+		}
+
 		// 1. Handle Uninstall first
 		if initUninstall {
 			return runUninstall()
@@ -55,6 +60,7 @@ them into a single hook configuration.`,
 		}
 
 		var entries []manifest.Entry
+		var hooksetConf manifest.HooksetConf
 
 		opts := manifest.ReadOptions{
 			StrictIncludes: initStrict,
@@ -190,10 +196,12 @@ them into a single hook configuration.`,
 					entries = selected
 				}
 			} else {
-				entries, err = manifest.Read(tomlPath, opts)
+				var mf *manifest.File
+				mf, entries, err = manifest.ReadFile(tomlPath, opts)
 				if err != nil {
 					return fmt.Errorf("reading manifest: %w", err)
 				}
+				hooksetConf = mf.Hookset
 
 				// Offer to add more hooks if file exists
 				if !initNoInteractive && !initInteractive && isatty.IsTerminal(os.Stdout.Fd()) {
@@ -287,45 +295,58 @@ them into a single hook configuration.`,
 
 		// 5. Perform actions per hook
 		fmt.Printf("[hookset] Processing %d hook(es)\n", len(entries))
-		for i, entry := range entries {
-			action := actions[i]
-			switch action {
-			case init_view.ActionInstall:
-				// Wipe old and write new
-				if err := gitconfig.RemoveHook(entry.Name, git.ScopeLocal); err != nil {
-					// Not fatal if it didn't exist
-					if !strings.Contains(err.Error(), "No such section") {
-						return fmt.Errorf("removing existing hook %q: %w", entry.Name, err)
-					}
-				}
-				h := gitconfig.Hook{
-					Name:    entry.Name,
-					Event:   entry.Event,
-					Command: buildWrapperCommand(entry, initDirect),
-					Matches: entry.Match,
-					Enabled: true,
-				}
-				if err := gitconfig.AddHook(h, git.ScopeLocal); err != nil {
-					return fmt.Errorf("installing hook %q: %w", entry.Name, err)
-				}
-				fmt.Printf("  ✓ Installed: %s\n", entry.Name)
 
-			case init_view.ActionUninstall:
-				// Explicit removal
-				if err := gitconfig.RemoveHook(entry.Name, git.ScopeLocal); err != nil {
-					if !strings.Contains(err.Error(), "No such section") {
-						return fmt.Errorf("removing hook %q: %w", entry.Name, err)
+		parallelMode := orchestrator.IsEnabled(hooksetConf.Experimental)
+		if parallelMode && !initDirect {
+			fmt.Fprintln(os.Stderr, orchestrator.AlphaBanner)
+			if err := installParallelHooks(entries, actions); err != nil {
+				return err
+			}
+		} else {
+			for i, entry := range entries {
+				action := actions[i]
+				switch action {
+				case init_view.ActionInstall:
+					// Wipe old and write new
+					if err := gitconfig.RemoveHook(entry.Name, git.ScopeLocal); err != nil {
+						// Not fatal if it didn't exist
+						if !strings.Contains(err.Error(), "No such section") {
+							return fmt.Errorf("removing existing hook %q: %w", entry.Name, err)
+						}
 					}
-				}
-				fmt.Printf("  × Removed: %s\n", entry.Name)
+					h := gitconfig.Hook{
+						Name:    entry.Name,
+						Event:   entry.Event,
+						Command: buildWrapperCommand(entry, initDirect),
+						Matches: entry.Match,
+						Enabled: true,
+					}
+					if err := gitconfig.AddHook(h, git.ScopeLocal); err != nil {
+						return fmt.Errorf("installing hook %q: %w", entry.Name, err)
+					}
+					fmt.Printf("  ✓ Installed: %s\n", entry.Name)
 
-			case init_view.ActionIgnore:
-				// Do nothing, skip this entry
-				fmt.Printf("  • Skipped: %s\n", entry.Name)
+				case init_view.ActionUninstall:
+					// Explicit removal
+					if err := gitconfig.RemoveHook(entry.Name, git.ScopeLocal); err != nil {
+						if !strings.Contains(err.Error(), "No such section") {
+							return fmt.Errorf("removing hook %q: %w", entry.Name, err)
+						}
+					}
+					fmt.Printf("  × Removed: %s\n", entry.Name)
+
+				case init_view.ActionIgnore:
+					// Do nothing, skip this entry
+					fmt.Printf("  • Skipped: %s\n", entry.Name)
+				}
 			}
 		}
 
 		fmt.Println("[hookset] Done. Verify with: hookset list")
+
+		// Store the version that installed these hooks
+		storeVersion()
+
 		return nil
 	},
 }
@@ -355,7 +376,7 @@ func uninstallManagedHooks(verbose bool) error {
 		}
 
 		// Surgical removal: only touch hooks we own
-		if strings.Contains(h.Command, "hookset exec") {
+		if strings.Contains(h.Command, "hookset exec") || strings.Contains(h.Command, "hookset exec-event") {
 			if err := gitconfig.RemoveHook(name, git.ScopeLocal); err != nil {
 				return fmt.Errorf("removing hook %q: %w", name, err)
 			}
@@ -370,6 +391,94 @@ func uninstallManagedHooks(verbose bool) error {
 		fmt.Println("  (No hookset-managed hooks found)")
 	}
 	return nil
+}
+
+// installParallelHooks implements D1.c: per-entry [hook] blocks are written with
+// enabled = false so `git hook list` still shows them by name, while a single
+// [hook "hookset-<event>"] coordinator entry (enabled = true) calls
+// `hookset exec-event <event>` and handles parallel/serial dispatch.
+//
+// This means:
+//   - `git hook list pre-commit` shows: eslint, prettier, typecheck, hookset-pre-commit
+//   - Only hookset-pre-commit fires; the others are transparent documentation.
+func installParallelHooks(entries []manifest.Entry, actions map[int]init_view.HookAction) error {
+	// Phase 1: Remove all existing hookset-managed entries (idempotent).
+	existingNames, err := gitconfig.GetAllHookNames(git.ScopeLocal)
+	if err != nil {
+		return fmt.Errorf("listing existing hooks: %w", err)
+	}
+	for _, name := range existingNames {
+		h, err := gitconfig.GetHook(name, git.ScopeLocal)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(h.Command, "hookset exec") || strings.Contains(h.Command, "hookset exec-event") {
+			if err := gitconfig.RemoveHook(name, git.ScopeLocal); err != nil {
+				return fmt.Errorf("removing hook %q: %w", name, err)
+			}
+		}
+	}
+
+	// Phase 2: Write per-entry blocks with enabled=false (visibility only).
+	// These let `git hook list <event>` show the real hook names for inspection.
+	seenEvents := map[string]bool{}
+	var installEvents []string
+	for i, e := range entries {
+		if actions[i] != init_view.ActionInstall {
+			continue
+		}
+		h := gitconfig.Hook{
+			Name:    e.Name,
+			Event:   e.Event,
+			Command: buildWrapperCommand(e, initDirect),
+			Matches: e.Match,
+			Enabled: false, // D1.c: git will NOT fire these directly
+		}
+		if err := gitconfig.AddHook(h, git.ScopeLocal); err != nil {
+			return fmt.Errorf("installing hook entry %q: %w", e.Name, err)
+		}
+		fmt.Printf("  • Registered (visible): %s [%s] — disabled, run via coordinator\n", e.Name, e.Event)
+		if !seenEvents[e.Event] {
+			seenEvents[e.Event] = true
+			installEvents = append(installEvents, e.Event)
+		}
+	}
+
+	// Phase 3: Write one coordinator entry per event (enabled=true, fires by git).
+	for _, event := range installEvents {
+		h := gitconfig.Hook{
+			Name:    "hookset-" + event,
+			Event:   event,
+			Command: buildExecEventCommand(event),
+			Enabled: true,
+		}
+		if err := gitconfig.AddHook(h, git.ScopeLocal); err != nil {
+			return fmt.Errorf("installing coordinator for event %q: %w", event, err)
+		}
+		fmt.Printf("  ✓ Installed coordinator: hookset-%s → hookset exec-event %s\n", event, event)
+	}
+
+	// Phase 4: Explicit removes for ActionUninstall entries.
+	for i, e := range entries {
+		if actions[i] == init_view.ActionUninstall {
+			if err := gitconfig.RemoveHook(e.Name, git.ScopeLocal); err != nil {
+				if !strings.Contains(err.Error(), "No such section") {
+					return fmt.Errorf("removing hook %q: %w", e.Name, err)
+				}
+			}
+			fmt.Printf("  × Removed: %s\n", e.Name)
+		}
+	}
+	return nil
+}
+
+// buildExecEventCommand constructs the self-checking per-event wrapper that git
+// calls when parallel mode is active.  It routes all hooks for the event through
+// `hookset exec-event <event>` which handles parallel/serial dispatch.
+func buildExecEventCommand(event string) string {
+	const installMsg = "hookset is not installed. See: https://bulga138.github.io/hookset/"
+	inner := "hookset exec-event " + shellQuote(event) + ` "$@"`
+	return buildPresenceCheckPassthrough(installMsg, inner)
 }
 
 func init() {
@@ -490,65 +599,195 @@ func discoverAndMergeRecursive(root string, opts manifest.ReadOptions) ([]manife
 	return entries, nil
 }
 
+// argStyleHooks is the set of git hook events that receive positional arguments
+// from git rather than operating on the set of staged files. These hooks must
+// bypass the staging engine and forward git's arguments verbatim.
+var argStyleHooks = map[string]bool{
+	"commit-msg":         true,
+	"prepare-commit-msg": true,
+	"pre-rebase":         true,
+	"post-checkout":      true,
+	"post-merge":         true,
+	"post-rewrite":       true,
+	"applypatch-msg":     true,
+}
+
 // buildWrapperCommand constructs the self-checking hook command stored in git config.
-// It is tailored to the OS running hookset init.
 //
-// If direct is true, returns the command without the hookset wrapper.
-// Unix:    sh -c 'command -v hookset >/dev/null 2>&1 || { echo "..." >&2; exit 1; }; exec hookset exec ...'
-// Windows: cmd /c "where hookset >nul 2>&1 || (echo ... 1>&2 & exit /b 1) & hookset exec ..."
+// All hooks (filtering and non-filtering) are routed through hookset exec so
+// that the stash/restage cycle is uniform. The user's command string is passed
+// verbatim via sh -c to preserve embedded quoting and shell metacharacters.
+//
+// Passthrough hooks (arg-style events or entries with passthrough=true) receive
+// git's positional arguments via "$@" — the staging engine is bypassed.
+//
+// If direct is true, returns the command without any hookset wrapper.
+//
+// Rendered form (Unix, normal):
+//
+//	sh -c 'command -v hookset >/dev/null 2>&1 || { printf "%s\n" "<msg>" >&2; exit 1; }; exec hookset exec --name n [--match p]... -- sh -c <cmd>'
+//
+// Rendered form (Unix, passthrough):
+//
+//	sh -c 'command -v hookset >/dev/null 2>&1 || { printf "%s\n" "<msg>" >&2; exit 1; }; exec hookset exec --name n --event <event> -- sh -c <cmd> "$@"' --
 func buildWrapperCommand(entry manifest.Entry, direct bool) string {
-	// Direct mode: just return the command without hookset wrapper
 	if direct {
 		return entry.Command
 	}
 
-	hooksetInstallMsg := "hookset is not installed. See: https://bulga138.github.io/hookset/"
+	const installMsg = "hookset is not installed. See: https://bulga138.github.io/hookset/"
 
-	// Build the hookset exec invocation.
+	isPassthrough := entry.Passthrough || argStyleHooks[entry.Event]
+
+	// Build: hookset exec --name <name> [--event <event>] [--match <pat>]... -- sh -c <command> ["$@"]
+	// The user's command is wrapped in "sh -c '...'" so that:
+	//   1. Shell metacharacters (&&, ;, pipes, subshells) work as expected.
+	//   2. No argument-splitting mangling from strings.Fields.
 	var execParts []string
 	execParts = append(execParts, "hookset", "exec")
+	execParts = append(execParts, "--name", shellQuote(entry.Name))
+	if isPassthrough {
+		execParts = append(execParts, "--event", shellQuote(entry.Event))
+	}
 	for _, m := range entry.Match {
 		execParts = append(execParts, "--match", shellQuote(m))
 	}
-	if len(entry.Match) > 0 {
-		// File-filtering hook — append -- command
-		execParts = append(execParts, "--")
-		execParts = append(execParts, strings.Fields(entry.Command)...)
-	} else {
-		// Non-filtering hook (e.g., "go test ./...")
-		execParts := strings.Fields(entry.Command)
-		binary := execParts[0]
-
-		// If we are checking for something other than hookset, use a generic message
-		installMsg := hooksetInstallMsg
-		if binary != "hookset" {
-			installMsg = fmt.Sprintf("%s is not installed and is required for this hook.", binary)
-		}
-
-		return buildPresenceCheck(binary, installMsg, strings.Join(execParts, " "))
+	if entry.Cwd != "" {
+		execParts = append(execParts, "--cwd", shellQuote(entry.Cwd))
 	}
-	return buildPresenceCheck("hookset", hooksetInstallMsg, strings.Join(execParts, " "))
+	if entry.FailText != "" {
+		execParts = append(execParts, "--fail-text", shellQuote(entry.FailText))
+	}
+	execParts = append(execParts, "--")
+	execParts = append(execParts, "sh", "-c", shellQuote(entry.Command))
+	if isPassthrough {
+		// Append "$@" so git's positional args are forwarded to the user command.
+		// The trailing " --" is the argv[0] placeholder required by sh -c.
+		execParts = append(execParts, `"$@"`)
+	}
+
+	inner := strings.Join(execParts, " ")
+	if isPassthrough {
+		// The outer sh -c receives git args as $1, $2, … via the trailing "--".
+		// We embed them into the inner call via "$@".
+		return buildPresenceCheckPassthrough(installMsg, inner)
+	}
+	return buildPresenceCheck(installMsg, inner)
 }
 
-func buildPresenceCheck(binary, installMsg, execCmd string) string {
-	// Check PATH first, then current directory (for development workflows).
-	// On Windows, also checks for .exe extension.
-	if runtime.GOOS == "windows" {
-		return fmt.Sprintf(
-			`sh -c 'command -v %s >/dev/null 2>&1 || { test -f "./%s.exe" && exec "./%s.exe" exec --help >/dev/null 2>&1 || { printf "%%s\\n" "%s" >&2; exit 1; }; }; exec %s'`,
-			binary, binary, binary, installMsg, execCmd,
-		)
-	}
-	// Unix
+// buildPresenceCheck wraps execCmd in a sh -c that aborts with installMsg
+// if hookset is not found on PATH.
+func buildPresenceCheck(installMsg, execCmd string) string {
+	// Single-quote the install message for safe embedding in the sh -c '...' body.
+	// Any apostrophes in the message are escaped via the standard POSIX idiom.
+	safeMsg := strings.ReplaceAll(installMsg, "'", "'\\''")
 	return fmt.Sprintf(
-		`sh -c 'command -v %s >/dev/null 2>&1 || { test -f "./%s" && exec "./%s" exec --help >/dev/null 2>&1 || { printf "%%s\\n" "%s" >&2; exit 1; }; }; exec %s'`,
-		binary, binary, binary, installMsg, execCmd,
+		`sh -c 'command -v hookset >/dev/null 2>&1 || { printf "%%s\n" '%s' >&2; exit 1; }; exec %s'`,
+		safeMsg, execCmd,
+	)
+}
+
+// buildPresenceCheckPassthrough is like buildPresenceCheck but threads git's
+// positional arguments ($1, $2, …) through to the inner hookset exec call via "$@".
+// The trailing " --" in the rendered string is the argv[0] placeholder for sh -c.
+func buildPresenceCheckPassthrough(installMsg, execCmd string) string {
+	safeMsg := strings.ReplaceAll(installMsg, "'", "'\\''")
+	return fmt.Sprintf(
+		`sh -c 'command -v hookset >/dev/null 2>&1 || { printf "%%s\n" '%s' >&2; exit 1; }; exec %s' --`,
+		safeMsg, execCmd,
 	)
 }
 
 func shellQuote(s string) string {
-	if !strings.ContainsAny(s, " \t\"'") {
+	if !strings.ContainsAny(s, " \t\"'\\") {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// templateEntriesByName is a thin bridge used by bootstrap.go so it can
+// resolve template entries without importing internal/templates directly.
+func templateEntriesByName(name string) ([]manifest.Entry, error) {
+	return templates.GenerateEntries([]string{name})
+}
+
+// versionKey is the git config key where we store the hookset version that installed the hooks.
+const versionKey = "hookset.version"
+
+// storeVersion stores the current hookset version in git config.
+func storeVersion() {
+	version := buildVersion()
+	git.Run("config", string(git.ScopeLocal), versionKey, version)
+}
+
+// getStoredVersion returns the stored hookset version from git config, or empty if not set.
+func getStoredVersion() string {
+	r := git.Run("config", string(git.ScopeLocal), versionKey)
+	if r.OK {
+		return r.Stdout
+	}
+	return ""
+}
+
+// CheckAndUpdateHooks checks if the hookset version has changed and re-runs init if needed.
+// This ensures hooks are updated when hookset is upgraded to a new version with different settings.
+func CheckAndUpdateHooks() {
+	// Only check inside a git repo
+	root, err := git.RepoRoot()
+	if err != nil {
+		return
+	}
+
+	// Check if there are any hooks managed by hookset
+	hooks, err := gitconfig.GetAllHookNames(git.ScopeLocal)
+	if err != nil || len(hooks) == 0 {
+		return
+	}
+
+	// Check if any hook is managed by hookset (contains "hookset exec")
+	hasHooksetHooks := false
+	for _, name := range hooks {
+		h, err := gitconfig.GetHook(name, git.ScopeLocal)
+		if err == nil && strings.Contains(h.Command, "hookset exec") {
+			hasHooksetHooks = true
+			break
+		}
+	}
+	if !hasHooksetHooks {
+		return
+	}
+
+	// Compare versions
+	currentVersion := buildVersion()
+	storedVersion := getStoredVersion()
+
+	if storedVersion != "" && storedVersion != currentVersion {
+		fmt.Println("[hookset] Version changed from", storedVersion, "to", currentVersion, "- updating hooks...")
+		// Re-run init with existing manifest to update hooks
+		// We need to re-read the manifest and re-install hooks
+		tomlPath := filepath.Join(root, manifest.Filename)
+		if _, err := os.Stat(tomlPath); err == nil {
+			opts := manifest.ReadOptions{}
+			entries, err := manifest.Read(tomlPath, opts)
+			if err == nil && len(entries) > 0 {
+				// Re-install all hooks with new wrapper commands
+				for _, entry := range entries {
+					// Remove old hook
+					gitconfig.RemoveHook(entry.Name, git.ScopeLocal)
+					// Add new hook with updated wrapper
+					h := gitconfig.Hook{
+						Name:    entry.Name,
+						Event:   entry.Event,
+						Command: buildWrapperCommand(entry, false),
+						Matches: entry.Match,
+						Enabled: true,
+					}
+					gitconfig.AddHook(h, git.ScopeLocal)
+				}
+				// Update stored version
+				storeVersion()
+				fmt.Println("[hookset] Hooks updated successfully.")
+			}
+		}
+	}
 }

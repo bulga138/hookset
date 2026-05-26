@@ -374,3 +374,140 @@ func TestExpandHome(t *testing.T) {
 		}
 	}
 }
+
+// ── B config parity tests ────────────────────────────────────────────────────
+
+func TestEntry_GlobAliasNormalized(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, ".hookset.toml")
+
+	// Write TOML with glob= instead of match=.
+	toml := `
+[[hooks]]
+name    = "lint"
+event   = "pre-commit"
+command = "eslint"
+glob    = ["*.ts", "*.js"]
+`
+	if err := os.WriteFile(path, []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := Read(path, ReadOptions{})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	e := entries[0]
+	if len(e.Match) != 2 {
+		t.Errorf("expected glob values merged into match, got match=%v glob=%v", e.Match, e.Glob)
+	}
+	if len(e.Glob) != 0 {
+		t.Errorf("expected glob cleared after merge, got %v", e.Glob)
+	}
+}
+
+func TestEntry_ConfigParityFields(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, ".hookset.toml")
+
+	toml := `
+[[hooks]]
+name        = "typecheck"
+event       = "pre-commit"
+command     = "tsc --noEmit"
+cwd         = "packages/frontend"
+fail_text   = "TypeScript errors on {branch}"
+interactive = true
+tags        = ["slow", "ts"]
+`
+	if err := os.WriteFile(path, []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := Read(path, ReadOptions{})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	e := entries[0]
+	if e.Cwd != "packages/frontend" {
+		t.Errorf("Cwd: got %q, want %q", e.Cwd, "packages/frontend")
+	}
+	if e.FailText != "TypeScript errors on {branch}" {
+		t.Errorf("FailText: got %q", e.FailText)
+	}
+	if !e.Interactive {
+		t.Error("Interactive: expected true")
+	}
+	if len(e.Tags) != 2 || e.Tags[0] != "slow" || e.Tags[1] != "ts" {
+		t.Errorf("Tags: got %v", e.Tags)
+	}
+}
+
+func TestReadPyproject(t *testing.T) {
+	tmp := t.TempDir()
+	pypath := filepath.Join(tmp, "pyproject.toml")
+
+	content := `
+[tool.hookset]
+[[tool.hookset.hooks]]
+name    = "ruff"
+event   = "pre-commit"
+command = "ruff check"
+
+[[tool.hookset.hooks]]
+name    = "mypy"
+event   = "pre-push"
+command = "mypy ."
+`
+	if err := os.WriteFile(pypath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ReadPyproject(pypath)
+	if err != nil {
+		t.Fatalf("ReadPyproject: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	if entries[0].Name != "ruff" || entries[1].Name != "mypy" {
+		t.Errorf("unexpected entries: %v", entries)
+	}
+}
+
+func TestRead_FallsBackToPyproject(t *testing.T) {
+	tmp := t.TempDir()
+	// No .hookset.toml — only pyproject.toml.
+	pypath := filepath.Join(tmp, "pyproject.toml")
+	content := `
+[tool.hookset]
+[[tool.hookset.hooks]]
+name    = "ruff"
+event   = "pre-commit"
+command = "ruff check"
+`
+	if err := os.WriteFile(pypath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	manifestPath := filepath.Join(tmp, ".hookset.toml")
+	var warned []string
+	entries, err := Read(manifestPath, ReadOptions{
+		Warn: func(msg string) { warned = append(warned, msg) },
+	})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "ruff" {
+		t.Errorf("unexpected entries: %v", entries)
+	}
+	if len(warned) == 0 {
+		t.Error("expected a warning about pyproject fallback, got none")
+	}
+}

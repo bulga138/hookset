@@ -24,11 +24,24 @@ var addCmd = &cobra.Command{
 	Short: "Add a hook to git config or .hookset.toml",
 	Long: `Add a named hook entry.
 
+Sugar form (no -- required):
+  hookset add <name> <event> "<command>"
+
+  Example:
+    hookset add typecheck pre-push "tsc --noEmit"
+    hookset add commitlint commit-msg "npx commitlint --edit"
+
+Full form:
+  hookset add <name> [--on <event>] [--match <pat>]... [--manifest] -- <command>
+
   Without --manifest: writes directly to .git/config (personal, uncommitted).
   With --manifest:    appends to .hookset.toml only; run hookset init to apply.
   With --global:      writes to ~/.gitconfig (applies to all repos on this machine).
 
 Examples:
+  # Sugar form — fastest way to add a hook
+  hookset add typecheck pre-push "tsc --noEmit"
+
   # Personal hook — not shared with the team
   hookset add typecheck --on pre-push -- tsc --noEmit
 
@@ -45,18 +58,46 @@ Examples:
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := requireGit254(); err != nil {
+			return err
+		}
 		name := args[0]
 
+		// ── Sugar form: hookset add <name> <event> "<command>" ────────────────
+		// Detected when: no "--" in os.Args, args[1] is a known event, args[2] is present.
+		if !hasDashDash() && len(args) == 3 && isKnownEvent(args[1]) {
+			entry := manifest.Entry{
+				Name:        name,
+				Event:       args[1],
+				Command:     args[2],
+				Passthrough: argStyleHooks[args[1]],
+			}
+			if addManifest {
+				return addToManifest(entry)
+			}
+			scope := git.ScopeLocal
+			if addGlobal {
+				scope = git.ScopeGlobal
+			}
+			return addToConfig(entry, scope)
+		}
+
+		// ── Full form: hookset add <name> [flags] -- <command> ────────────────
 		command := findDashDash()
 		if command == nil {
-			return fmt.Errorf("command is required after --\n  Example: hookset add eslint -- npx eslint --cache --fix")
+			return fmt.Errorf(
+				"command is required.\n\n" +
+					"  Sugar form:  hookset add <name> <event> \"<command>\"\n" +
+					"  Full form:   hookset add <name> --on <event> -- <command>\n\n" +
+					"  Example: hookset add typecheck pre-push \"tsc --noEmit\"")
 		}
 
 		entry := manifest.Entry{
-			Name:    name,
-			Event:   addEvent,
-			Match:   addMatches,
-			Command: strings.Join(command, " "),
+			Name:        name,
+			Event:       addEvent,
+			Match:       addMatches,
+			Command:     strings.Join(command, " "),
+			Passthrough: argStyleHooks[addEvent],
 		}
 
 		if addManifest {
@@ -127,4 +168,26 @@ func findDashDash() []string {
 		}
 	}
 	return nil
+}
+
+// hasDashDash returns true if "--" appears anywhere in os.Args.
+func hasDashDash() bool {
+	for _, a := range os.Args {
+		if a == "--" {
+			return true
+		}
+	}
+	return false
+}
+
+// isKnownEvent returns true for recognised git hook event names.
+func isKnownEvent(s string) bool {
+	switch s {
+	case "pre-commit", "pre-push", "commit-msg", "prepare-commit-msg",
+		"pre-rebase", "post-checkout", "post-merge", "post-rewrite",
+		"applypatch-msg", "post-receive", "pre-receive", "update",
+		"post-update", "pre-applypatch", "post-applypatch":
+		return true
+	}
+	return false
 }
