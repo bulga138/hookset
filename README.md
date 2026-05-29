@@ -1,5 +1,7 @@
 # hookset
 
+![hookset](https://custom-icon-badges.demolab.com/badge/hookset-blue.svg?logo=hookset&logoColor=white 'hookset') [![Latest release](https://custom-icon-badges.demolab.com/github/release/bulga138/hookset)](https://github.com/bulga138/hookset/releases) ![hookset](https://custom-icon-badges.demolab.com/badge/brew-yellow.svg?logo=homebrew-color) [![license](https://custom-icon-badges.demolab.com/github/license/bulga138/hookset?logo=law&logoColor=white)](https://github.com/bulga138/hookset/blob/master/LICENSE 'license MIT') ![hookset](https://custom-icon-badges.demolab.com/github/last-commit/bulga138/hookset?logo=history&logoColor=white) [![made-with-Go](https://custom-icon-badges.demolab.com/badge/Made%20with-Go-1f425f.svg)](https://go.dev/)
+
 **Powered by native git 2.54 hooks — one global install, zero per-project dependencies.**
 
 `hookset` uses git 2.54's native `[hook "<name>"]` config syntax to define, install, and run git hooks. It replaces `husky`, `lefthook`, and `lint-staged` with a single binary installed once per developer machine. Projects ship only `.hookset.toml` — no `npm install`, no `prepare` script, no `core.hooksPath` workaround.
