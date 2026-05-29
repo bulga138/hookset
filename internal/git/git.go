@@ -149,8 +149,11 @@ func StagedFiles() []string {
 // MatchStagedFiles returns the subset of staged that match the given pathspec
 // patterns, using git ls-files for exact Git-native glob matching.
 func MatchStagedFiles(staged []string, patterns []string) ([]string, error) {
-	if len(staged) == 0 || len(patterns) == 0 {
+	if len(staged) == 0 {
 		return nil, nil
+	}
+	if len(patterns) == 0 {
+		return staged, nil
 	}
 	args := []string{"ls-files", "--cached", "--"}
 	args = append(args, patterns...)
