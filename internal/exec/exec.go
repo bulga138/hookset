@@ -175,6 +175,9 @@ func Run(opts Options) int {
 	// ── 8. Run the tool ───────────────────────────────────────────────────────
 
 	// Apply cwd if set — change directory before running the command.
+	// Save origDir so we can restore for re-staging (step 9), since
+	// classifyAfterRun and git add/rm --cached need repo-root-relative paths.
+	origDir, _ := os.Getwd()
 	if opts.Cwd != "" {
 		if err := os.Chdir(opts.Cwd); err != nil {
 			fmt.Fprintf(os.Stderr, "[hookset] error: cannot chdir to %q: %v\n", opts.Cwd, err)
@@ -209,6 +212,14 @@ func Run(opts Options) int {
 	}
 
 	// ── 9. Re-stage modified or deleted files ─────────────────────────────────
+	//
+	// Restore original CWD first — classifyAfterRun uses os.Stat on
+	// repo-root-relative paths, and git add/rm --cached also expect
+	// repo-root context.
+
+	if !isPassthrough && opts.Cwd != "" {
+		_ = os.Chdir(origDir)
+	}
 
 	if !isPassthrough && len(matched) > 0 {
 		toAdd, toRemove := classifyAfterRun(matched)
