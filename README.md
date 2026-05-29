@@ -151,6 +151,20 @@ hookset/
 - **Linked worktrees:** Not supported. `hookset exec` will detect and refuse to run in a linked worktree.
 - **Large files (>10 MB):** A warning is emitted; pass `--allow-large` to suppress.
 
+## Using hookset?
+
+Add this badge to your project's README:
+
+[![hookset](https://custom-icon-badges.demolab.com/badge/hookset-blue.svg?logo=hookset&logoColor=white)](https://github.com/bulga138/hookset)
+
+```markdown
+[![hookset](https://custom-icon-badges.demolab.com/badge/hookset-blue.svg?logo=hookset&logoColor=white)](https://github.com/bulga138/hookset)
+```
+
 ## License
 
 MIT
+
+```
+
+```
