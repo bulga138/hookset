@@ -163,8 +163,4 @@ Add this badge to your project's README:
 
 ## License
 
-MIT
-
-```
-
-```
+[MIT](LICENSE.md)
